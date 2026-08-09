@@ -4,6 +4,6 @@ Derived from ICTContact (https://www.ictcontact.com).
 ICT Innovations (https://www.ictinnovations.com). MIT licensed.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = ["__version__"]
