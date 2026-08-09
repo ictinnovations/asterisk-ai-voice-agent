@@ -1,0 +1,39 @@
+# asterisk-ai-voice-agent — persona definitions.
+# Each top-level key is a persona name you reference from the dialplan
+# (Set(PERSONA=<name>)). Copy to personas.yaml and edit.
+
+demo:
+  greeting: "Hi! Thanks for calling. How can I help you today?"
+  system_prompt: |
+    You are a friendly, concise phone assistant for Acme Corp.
+    Speak naturally and keep answers short — this is a phone call, not chat.
+    Never invent facts. If you cannot help, offer to transfer to a human.
+  llm_provider: anthropic
+  llm_model: claude-sonnet-4-6
+  llm_temperature: 0.4
+  stt_provider: openai            # OpenAI Whisper
+  stt_model: whisper-1
+  stt_language: en
+  tts_provider: piper             # piper (local) | elevenlabs (cloud)
+  tts_voice_id: en_US-amy-medium  # Piper .onnx basename, or ElevenLabs voice id
+  interrupt_enabled: true         # barge-in: caller can talk over the agent
+  silence_timeout_ms: 800         # end-of-utterance silence before STT finalizes
+  max_call_seconds: 900
+  tools_enabled: []               # e.g. [transfer, schedule_callback] — routed to tools.webhook_url
+
+support:
+  greeting: "Acme support, this call may be recorded. What's going on?"
+  system_prompt: |
+    You are a calm, efficient technical support agent. Diagnose in plain
+    language, one question at a time. Offer to transfer to a human agent
+    (tool: transfer, target "queue:support") if the caller asks or is stuck.
+  llm_provider: anthropic
+  llm_model: claude-sonnet-4-6
+  llm_temperature: 0.3
+  stt_provider: openai
+  stt_language: en
+  tts_provider: piper
+  tts_voice_id: en_US-amy-medium
+  interrupt_enabled: true
+  max_call_seconds: 1200
+  tools_enabled: [transfer, schedule_callback]

@@ -1,0 +1,16 @@
+services:
+  ai-voice-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    # host networking so Asterisk on the same box reaches 127.0.0.1:9091/9092.
+    # On a remote Asterisk, drop network_mode and publish ports instead, and
+    # set listen.host: 0.0.0.0 in config.yaml (firewall the ports!).
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./personas.yaml:/app/personas.yaml:ro
+      - ./voices:/app/voices
+    environment:
+      - AI_AGENT_LOG=INFO

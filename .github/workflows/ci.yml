@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Byte-compile the sidecar
+        run: python -m compileall sidecar
+      - name: YAML sanity
+        run: |
+          python -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ['config.example.yaml','personas.example.yaml']]; print('yaml ok')"
+
+  imports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      # compileall never executes an import statement, so it cannot catch a
+      # module that is referenced but missing from the tree. This can.
+      - name: Import every sidecar module
+        working-directory: sidecar
+        run: python -c "import audiosocket, tools, stt, llm, tts, agent; print('imports ok')"

@@ -1,0 +1,31 @@
+# asterisk-ai-voice-agent — infrastructure config.
+# Copy to config.yaml and fill in. Personas live in personas.yaml.
+
+listen:
+  host: 127.0.0.1        # keep AudioSocket loopback-only
+  audiosocket_port: 9092 # Asterisk AudioSocket() dials this
+  register_port: 9091    # tiny HTTP endpoint the dialplan pre-registers persona to
+
+providers:
+  anthropic:
+    api_key: ""          # required for the default LLM
+  openai:
+    api_key: ""          # Whisper STT (the default)
+  elevenlabs:
+    api_key: ""          # optional: Scribe STT and/or cloud TTS (Piper is the local default)
+  piper:
+    voices_dir: ./voices # local Piper .onnx voices (download_voices.sh)
+    default_voice: en_US-amy-medium
+
+tools:
+  # Where LLM tool_use calls and end-of-call transcripts are POSTed.
+  # Leave blank to disable tool calling entirely.
+  webhook_url: ""
+  webhook_auth: ""       # optional value sent as `Authorization` header
+
+limits:
+  max_concurrent_calls: 2   # each call ~150 MB during synthesis bursts
+  max_call_seconds: 900     # hard safety cap per call
+  stt_timeout_s: 30
+  llm_timeout_s: 30
+  tts_timeout_s: 15

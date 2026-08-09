@@ -1,0 +1,9 @@
+config.yaml
+personas.yaml
+voices/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+.DS_Store
