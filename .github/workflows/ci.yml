@@ -13,8 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Byte-compile the sidecar
-        run: python -m compileall sidecar
+      - name: Byte-compile the package
+        run: python -m compileall asterisk_ai_voice_agent
       - run: pip install pyyaml
       - name: YAML sanity
         run: |
@@ -31,6 +31,31 @@ jobs:
       - run: pip install -r requirements.txt
       # compileall never executes an import statement, so it cannot catch a
       # module that is referenced but missing from the tree. This can.
-      - name: Import every sidecar module
-        working-directory: sidecar
-        run: python -c "import audiosocket, tools, stt, llm, tts, agent; print('imports ok')"
+      - name: Import every module
+        run: |
+          python -c "from asterisk_ai_voice_agent import audiosocket, tools, stt, llm, tts, agent; print('imports ok')"
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install build twine
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Validate metadata as PyPI will render it
+        run: twine check --strict dist/*
+      # Installing with --no-deps keeps this fast; the imports job already
+      # proves the dependency set resolves.
+      - name: Install the wheel and confirm the console script is wired up
+        run: |
+          pip install --no-deps dist/*.whl
+          python -c "import asterisk_ai_voice_agent as p; print('version', p.__version__)"
+          test -x "$(command -v asterisk-ai-voice-agent)"
+          echo "entry point ok"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

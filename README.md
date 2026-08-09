@@ -1,6 +1,7 @@
 # asterisk-ai-voice-agent
 
 [![CI](https://github.com/ictinnovations/asterisk-ai-voice-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ictinnovations/asterisk-ai-voice-agent/actions)
+[![PyPI](https://img.shields.io/pypi/v/asterisk-ai-voice-agent.svg)](https://pypi.org/project/asterisk-ai-voice-agent/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over [AudioSocket](https://docs.asterisk.org/Configuration/Channel-Drivers/AudioSocket/), and the sidecar runs a streaming speech-to-text → LLM → text-to-speech loop, so the caller has an actual back-and-forth conversation — interruptions and all. It's self-hosted: your PBX, your API keys, your prompts, no per-minute SaaS in the middle.
@@ -33,7 +34,7 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 4. If the LLM emits a `tool_use`, the sidecar POSTs it to your configured **tools webhook**, feeds the result back, and continues.
 5. On hangup it tears the call down and (optionally) POSTs a transcript to your webhook.
 
-The AudioSocket framing/pacing lives in a standalone, tested package — [`asterisk-audiosocket`](https://www.npmjs.com/package/asterisk-audiosocket) (Node/TypeScript) — and in [`sidecar/audiosocket.py`](./sidecar/audiosocket.py) here (Python). Same wire protocol, pick your language.
+The AudioSocket framing/pacing lives in a standalone, tested package — [`asterisk-audiosocket`](https://www.npmjs.com/package/asterisk-audiosocket) (Node/TypeScript) — and in [`asterisk_ai_voice_agent/audiosocket.py`](./asterisk_ai_voice_agent/audiosocket.py) here (Python). Same wire protocol, pick your language.
 
 > **A word on pacing.** `app_audiosocket` shoves each AUDIO frame at the channel the moment it arrives. So if you synthesize a sentence and write it all at once, you overrun the far end's jitter buffer and the caller hears only the tail of every phrase — which is baffling until you figure out why. The sidecar meters outbound audio to the 20 ms frame clock and re-clamps the deadline every frame, so a slow TTS response can't make it burst to catch up. We learned this one the hard way in production; if you roll your own, steal this bit.
 
@@ -45,6 +46,19 @@ cd asterisk-ai-voice-agent
 cp config.example.yaml config.yaml          # add your API keys
 cp personas.example.yaml personas.yaml      # define your agent(s)
 docker compose up -d
+```
+
+## Quick start (pip)
+
+Piper's phonemizer needs `espeak-ng` on the host, so install that first.
+
+```bash
+sudo apt-get install -y espeak-ng
+pip install asterisk-ai-voice-agent
+
+cp config.example.yaml config.yaml
+cp personas.example.yaml personas.yaml
+AI_AGENT_CONFIG=config.yaml AI_AGENT_PERSONAS=personas.yaml asterisk-ai-voice-agent
 ```
 
 Add to your Asterisk `extensions.conf`:

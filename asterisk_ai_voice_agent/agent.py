@@ -37,11 +37,11 @@ from typing import Dict, Optional
 import yaml
 import httpx
 
-from audiosocket import Frame, FrameType, audio_frame, parse_uuid, FRAME_BYTES, FRAME_SEC, SILENCE_FRAME
-from stt import StreamingSTT
-from llm import LLM
-from tts import StreamingTTS
-from tools import TOOL_SPECS
+from .audiosocket import Frame, FrameType, audio_frame, parse_uuid, FRAME_BYTES, FRAME_SEC, SILENCE_FRAME
+from .stt import StreamingSTT
+from .llm import LLM
+from .tts import StreamingTTS
+from .tools import TOOL_SPECS
 
 logging.basicConfig(
     level=os.environ.get("AI_AGENT_LOG", "INFO"),
@@ -369,8 +369,13 @@ async def main() -> None:
         await asyncio.gather(reg_srv.serve_forever(), as_srv.serve_forever())
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Console-script entry point (``asterisk-ai-voice-agent``)."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == "__main__":
+    cli()
