@@ -15,6 +15,7 @@ jobs:
           python-version: '3.11'
       - name: Byte-compile the sidecar
         run: python -m compileall sidecar
+      - run: pip install pyyaml
       - name: YAML sanity
         run: |
           python -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ['config.example.yaml','personas.example.yaml']]; print('yaml ok')"
