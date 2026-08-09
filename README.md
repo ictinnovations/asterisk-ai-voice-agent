@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/asterisk-ai-voice-agent.svg)](https://pypi.org/project/asterisk-ai-voice-agent/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over [AudioSocket](https://docs.asterisk.org/Configuration/Channel-Drivers/AudioSocket/), and the sidecar runs a streaming speech-to-text → LLM → text-to-speech loop, so the caller has an actual back-and-forth conversation — interruptions and all. It's self-hosted: your PBX, your API keys, your prompts, no per-minute SaaS in the middle.
+Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over [AudioSocket](https://docs.asterisk.org/Configuration/Channel-Drivers/AudioSocket/), and the sidecar runs a streaming speech-to-text → LLM → text-to-speech loop, so the caller has an actual back-and-forth conversation, interruptions and all. It's self-hosted: your PBX, your API keys, your prompts, no per-minute SaaS in the middle.
 
 ```
   ┌────────┐   RTP    ┌──────────┐  AudioSocket (TCP)  ┌───────────────────────┐
@@ -20,8 +20,8 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 - **Speech in** via OpenAI Whisper or ElevenLabs Scribe, with WebRTC VAD deciding when you've stopped talking.
 - **The brain** is Anthropic Claude, streamed token-by-token so the agent starts replying before the whole answer is ready. Swapping in another LLM means implementing one small module interface, documented in [PORTING.md](./PORTING.md).
 - **Speech out** via [Piper](https://github.com/rhasspy/piper), which runs locally and costs nothing, or ElevenLabs if you want their voices. Either way it's resampled to the 8 kHz slin16 that Asterisk expects.
-- **Barge-in** — start talking and the agent shuts up, like a real conversation.
-- **Tool calling** — let the model transfer the call, schedule a callback, look something up in your CRM. Calls go out to a webhook you control, so the actual logic stays in your stack.
+- **Barge-in.** Start talking and the agent shuts up, like a real conversation.
+- **Tool calling.** Let the model transfer the call, schedule a callback, look something up in your CRM. Calls go out to a webhook you control, so the actual logic stays in your stack.
 - **Personas** are just YAML: a greeting, a system prompt, which voice, which model, which tools.
 - **The pacing is handled.** This is the part everyone gets wrong the first time (more below).
 - Runs in Docker. `docker compose up`, point Asterisk at it, done.
@@ -34,9 +34,9 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 4. If the LLM emits a `tool_use`, the sidecar POSTs it to your configured **tools webhook**, feeds the result back, and continues.
 5. On hangup it tears the call down and (optionally) POSTs a transcript to your webhook.
 
-The AudioSocket framing/pacing lives in a standalone, tested package — [`asterisk-audiosocket`](https://www.npmjs.com/package/asterisk-audiosocket) (Node/TypeScript) — and in [`asterisk_ai_voice_agent/audiosocket.py`](./asterisk_ai_voice_agent/audiosocket.py) here (Python). Same wire protocol, pick your language.
+The AudioSocket framing/pacing lives in a standalone, tested package: [`asterisk-audiosocket`](https://www.npmjs.com/package/asterisk-audiosocket) (Node/TypeScript), and in [`asterisk_ai_voice_agent/audiosocket.py`](./asterisk_ai_voice_agent/audiosocket.py) here (Python). Same wire protocol, pick your language.
 
-> **A word on pacing.** `app_audiosocket` shoves each AUDIO frame at the channel the moment it arrives. So if you synthesize a sentence and write it all at once, you overrun the far end's jitter buffer and the caller hears only the tail of every phrase — which is baffling until you figure out why. The sidecar meters outbound audio to the 20 ms frame clock and re-clamps the deadline every frame, so a slow TTS response can't make it burst to catch up. We learned this one the hard way in production; if you roll your own, steal this bit.
+> **A word on pacing.** `app_audiosocket` shoves each AUDIO frame at the channel the moment it arrives. So if you synthesize a sentence and write it all at once, you overrun the far end's jitter buffer and the caller hears only the tail of every phrase, which is baffling until you figure out why. The sidecar meters outbound audio to the 20 ms frame clock and re-clamps the deadline every frame, so a slow TTS response can't make it burst to catch up. We learned this one the hard way in production; if you roll your own, steal this bit.
 
 ## Quick start (Docker)
 
@@ -67,7 +67,7 @@ Add to your Asterisk `extensions.conf`:
 #include "ai-voice-agent.conf"
 ```
 
-Copy [`asterisk/ai-voice-agent.conf`](./asterisk/ai-voice-agent.conf) into `/etc/asterisk/` and `dialplan reload`, then test — this rings your SIP phone and, when you answer, drops you into the **demo** persona:
+Copy [`asterisk/ai-voice-agent.conf`](./asterisk/ai-voice-agent.conf) into `/etc/asterisk/` and `dialplan reload`, then test. This rings your SIP phone and, when you answer, drops you into the **demo** persona:
 
 ```bash
 # Replace PJSIP/1001 with your own endpoint (e.g. SIP/1001, PJSIP/myphone).
@@ -133,11 +133,11 @@ Your endpoint returns a JSON result, which is fed back to the LLM as the tool re
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| `AudioSocket` fails / call drops immediately | Asterisk lacks the module. `asterisk -rx 'module show like audiosocket'` — you need `app_audiosocket.so` + `res_audiosocket.so` (Asterisk 18+). |
-| Call connects but the agent is **silent** | Persona not found (check the sidecar log for `no persona … dropping call`), or TTS not ready — no Piper voice in `./voices` (`./download_voices.sh en_US-amy-medium`), or a bad/empty LLM API key. |
-| Agent speaks but audio is **choppy / only the tail of each phrase** | Outbound pacing broken. Do **not** write TTS frames unpaced — use the metered writer (`_paced_write` in `agent.py`). This is the #1 AudioSocket mistake. |
+| `AudioSocket` fails / call drops immediately | Asterisk lacks the module. `asterisk -rx 'module show like audiosocket'`. You need `app_audiosocket.so` + `res_audiosocket.so` (Asterisk 18+). |
+| Call connects but the agent is **silent** | Persona not found (check the sidecar log for `no persona … dropping call`), or TTS not ready, with no Piper voice in `./voices` (`./download_voices.sh en_US-amy-medium`), or a bad/empty LLM API key. |
+| Agent speaks but audio is **choppy / only the tail of each phrase** | Outbound pacing broken. Do **not** write TTS frames unpaced. Use the metered writer (`_paced_write` in `agent.py`). This is the #1 AudioSocket mistake. |
 | Persona never loads (always falls back to `demo`) | The dialplan pre-register curl didn't reach the sidecar. Confirm `register_port` (default 9091) is reachable from Asterisk and not firewalled; check for the `register` line in the sidecar log. |
-| Remote Asterisk can't reach the sidecar | Set `listen.host: 0.0.0.0` in `config.yaml`, publish ports instead of `network_mode: host`, and **firewall 9091/9092** — never expose them publicly. |
+| Remote Asterisk can't reach the sidecar | Set `listen.host: 0.0.0.0` in `config.yaml`, publish ports instead of `network_mode: host`, and **firewall 9091/9092**. Never expose them publicly. |
 | Barge-in doesn't interrupt | `interrupt_enabled: true` on the persona, and your `stt.is_speech()` VAD must return `True` on caller speech. |
 | Tools do nothing | `tools.webhook_url` unset, or the persona's `tools_enabled` is empty, or the named tool isn't in `TOOL_SPECS` (`tools.py`). |
 
@@ -168,4 +168,4 @@ Questions about the commercial products go through [the ICT Innovations support 
 
 ## License
 
-[MIT](./LICENSE) — © Tahir Almas / ICT Innovations, derived from ICTContact.
+[MIT](./LICENSE). © Tahir Almas / ICT Innovations, derived from ICTContact.
