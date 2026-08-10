@@ -3,28 +3,28 @@
 Notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
-## [0.1.0] — 2026-08-09
+## [0.1.0] - 2026-08-09
 
 First public release. Extracted from the ICTContact AI Voice Agent, de-coupled
 from the platform (multi-tenancy, billing, internal REST), and made config-driven.
 
 ### Added
 - AudioSocket media sidecar: streaming STT → LLM → TTS over a single call.
-- `agent.py` orchestrator — pre-register HTTP endpoint + AudioSocket server,
+- `agent.py` orchestrator: pre-register HTTP endpoint + AudioSocket server,
   reader/consumer tasks, sentence-buffered playback, barge-in.
-- `stt.py` — OpenAI Whisper + ElevenLabs Scribe, WebRTC VAD end-of-utterance
+- `stt.py`: OpenAI Whisper + ElevenLabs Scribe, WebRTC VAD end-of-utterance
   detection, DTX/silence-gap watchdog, hallucination filtering.
-- `llm.py` — Anthropic Claude, streamed, with `tool_use`.
-- `tts.py` — Piper (local) + ElevenLabs (cloud), resampled to 8 kHz slin16,
+- `llm.py`: Anthropic Claude, streamed, with `tool_use`.
+- `tts.py`: Piper (local) + ElevenLabs (cloud), resampled to 8 kHz slin16,
   process-wide voice cache; voices directory is configurable (no hardcoded paths).
-- `tools.py` — default tool specs (transfer, schedule_callback, mark_dnc,
+- `tools.py`: default tool specs (transfer, schedule_callback, mark_dnc,
   crm_lookup, crm_update, send_sms), relayed to a webhook you control.
 - Per-agent personas in YAML; Asterisk dialplan include; Docker + compose;
   Piper voice downloader.
 
 ### Known limitations
 - v0.1: verified by construction, not yet exercised on a live call end-to-end.
-- Tool *behaviour* is external — you implement the webhook.
+- Tool *behaviour* is external, so you implement the webhook.
 - TTS/STT/LLM providers beyond those listed require implementing the module
   interface (see PORTING.md).
 
