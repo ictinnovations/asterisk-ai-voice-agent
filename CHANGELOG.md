@@ -3,6 +3,26 @@
 Notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+- The persona registry is now a strict allowlist. An AudioSocket connection whose
+  UUID was never pre-registered by the dialplan is dropped instead of being served
+  the `demo` persona, so the UUID acts as an authentication check against
+  connections from unauthorized sources. Suggested by `ldo` on the Asterisk
+  community forum.
+
+### Changed
+- **Behaviour change:** if the dialplan's `POST /register` never reaches the
+  sidecar (for example the `curl` times out), the call is now dropped rather than
+  answered by the fallback persona.
+
+### Added
+- `tests/test_allowlist.py`, which drives `Call.run()` over a real UUID frame and
+  checks both directions: unregistered UUIDs are rejected before the pipeline is
+  built, and pre-registered ones still reach it with persona and caller intact.
+  Wired into CI.
+
 ## [0.1.0] - 2026-08-09
 
 First public release. Extracted from the ICTContact AI Voice Agent, de-coupled

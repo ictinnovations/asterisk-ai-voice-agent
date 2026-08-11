@@ -171,6 +171,11 @@ class Call:
             return
         self.uuid = parse_uuid(first.payload)
         ctx = self.registry.take(self.uuid)
+        if not ctx:
+            # The dialplan pre-registers every UUID before it dials AudioSocket, so an
+            # unknown one is a stale retry or an unauthorized connection, not a new call.
+            log.warning("rejecting unregistered UUID %s", self.uuid)
+            return
         pname = ctx.get("persona") or "demo"
         self.persona = dict(self.personas.get(pname) or self.personas.get("demo") or {})
         if not self.persona:
