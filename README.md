@@ -156,6 +156,26 @@ Your endpoint returns a JSON result, which is fed back to the LLM as the tool re
 
 Logs: set `AI_AGENT_LOG=DEBUG` (env or compose) for per-frame detail.
 
+## What it looks like with a UI
+
+This project is a headless sidecar. You configure it with YAML and there's nothing to log into, by design.
+
+The screenshots below come from [ICTContact](https://www.ictcontact.com), the commercial platform this agent was pulled out of. They show the same persona model that `personas.yaml` describes here, so they're a useful map of what the fields mean in practice, and of what a front end over this sidecar can look like if you build one.
+
+![AI persona list in ICTContact](https://raw.githubusercontent.com/ictinnovations/asterisk-ai-voice-agent/main/doc/screenshots/personas-list.png)
+
+A persona carries a greeting, a system prompt and the toolbelt the model is allowed to reach for. Those map one to one onto `greeting`, `system_prompt` and `tools_enabled` in the YAML.
+
+![Persona editor showing greeting, system prompt and enabled tools](https://raw.githubusercontent.com/ictinnovations/asterisk-ai-voice-agent/main/doc/screenshots/persona-editor.png)
+
+Speech-to-text, text-to-speech, call limits and barge-in are per persona too, so one number can answer with a local Piper voice and another with ElevenLabs.
+
+![Speech-to-text, text-to-speech and call limit settings](https://raw.githubusercontent.com/ictinnovations/asterisk-ai-voice-agent/main/doc/screenshots/persona-models.png)
+
+In ICTContact the agent is a node in the IVR designer, so a menu option hands the caller over and the agent hands back. You get the same effect from the dialplan here: route to `AudioSocket()` when you want the agent, and let it transfer out through the `transfer` tool.
+
+![AI Voice Agent node in the IVR designer](https://raw.githubusercontent.com/ictinnovations/asterisk-ai-voice-agent/main/doc/screenshots/ivr-ai-node.png)
+
 ## Related open source
 
 - **[asterisk-audiosocket](https://github.com/ictinnovations/asterisk-audiosocket)** - the AudioSocket protocol layer on its own, in TypeScript. Prefer Node over Python? Build the agent in whatever language you like.
