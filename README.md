@@ -119,6 +119,19 @@ demo:
 | `tools.webhook_url` | Where `tool_use` calls and transcripts are POSTed. Omit to disable tools. |
 | `limits.max_concurrent_calls` | Concurrency cap (each call ~150 MB during synthesis). |
 
+## Latency and network tuning
+
+The sidecar sets `TCP_NODELAY` on every accepted AudioSocket connection, so there's nothing to configure. Outbound audio is one 320-byte frame every 20 ms, and Nagle's algorithm holds writes that small back waiting for more data to coalesce with, which is the opposite of what a paced audio stream wants.
+
+If Asterisk and the sidecar run on the same box over loopback, that's the whole story. Across a network, one kernel knob is worth knowing about:
+
+```sh
+# Corking can still batch small writes together even with TCP_NODELAY set.
+sysctl -w net.ipv4.tcp_autocorking=0
+```
+
+We haven't benchmarked that one, so measure before you keep it. Ignore the older `net.ipv4.tcp_low_latency` advice you'll find in forum posts; the knob was removed in Linux 4.14 and does nothing today.
+
 ## Tool calling (webhook contract)
 
 When the LLM calls a tool, the sidecar POSTs:
@@ -136,7 +149,7 @@ Your endpoint returns a JSON result, which is fed back to the LLM as the tool re
 | `AudioSocket` fails / call drops immediately | Asterisk lacks the module. `asterisk -rx 'module show like audiosocket'`. You need `app_audiosocket.so` + `res_audiosocket.so` (Asterisk 18+). |
 | Call connects but the agent is **silent** | Persona not found (check the sidecar log for `no persona … dropping call`), or TTS not ready, with no Piper voice in `./voices` (`./download_voices.sh en_US-amy-medium`), or a bad/empty LLM API key. |
 | Agent speaks but audio is **choppy / only the tail of each phrase** | Outbound pacing broken. Do **not** write TTS frames unpaced. Use the metered writer (`_paced_write` in `agent.py`). This is the #1 AudioSocket mistake. |
-| Persona never loads (always falls back to `demo`) | The dialplan pre-register curl didn't reach the sidecar. Confirm `register_port` (default 9091) is reachable from Asterisk and not firewalled; check for the `register` line in the sidecar log. |
+| Call drops instantly, log says `rejecting unregistered UUID` | The dialplan pre-register curl didn't reach the sidecar, so the UUID isn't on the allowlist. Confirm `register_port` (default 9091) is reachable from Asterisk and not firewalled; check for the `register` line in the sidecar log. Since 0.1.2 an unregistered UUID is dropped rather than served the `demo` persona. |
 | Remote Asterisk can't reach the sidecar | Set `listen.host: 0.0.0.0` in `config.yaml`, publish ports instead of `network_mode: host`, and **firewall 9091/9092**. Never expose them publicly. |
 | Barge-in doesn't interrupt | `interrupt_enabled: true` on the persona, and your `stt.is_speech()` VAD must return `True` on caller speech. |
 | Tools do nothing | `tools.webhook_url` unset, or the persona's `tools_enabled` is empty, or the named tool isn't in `TOOL_SPECS` (`tools.py`). |

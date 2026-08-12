@@ -12,6 +12,13 @@ Notable changes to this project. Format follows
   connections from unauthorized sources. Suggested by `ldo` on the Asterisk
   community forum.
 
+### Fixed
+- `TCP_NODELAY` is now set on every accepted AudioSocket connection. Outbound
+  audio is one 320-byte frame every 20 ms, and Nagle's algorithm holds writes that
+  small back waiting to coalesce them, so the pacing the writer works hard to get
+  right could still be undone by the kernel. Reported by `crystalsighting` on
+  r/Asterisk.
+
 ### Changed
 - **Behaviour change:** if the dialplan's `POST /register` never reaches the
   sidecar (for example the `curl` times out), the call is now dropped rather than
@@ -22,6 +29,10 @@ Notable changes to this project. Format follows
   checks both directions: unregistered UUIDs are rejected before the pipeline is
   built, and pre-registered ones still reach it with persona and caller intact.
   Wired into CI.
+- `tests/test_nodelay.py`, which starts the real server on an ephemeral port,
+  connects to it, and reads `TCP_NODELAY` back off the accepted socket. Wired
+  into CI.
+- README section on latency and network tuning.
 
 ## [0.1.0] - 2026-08-09
 

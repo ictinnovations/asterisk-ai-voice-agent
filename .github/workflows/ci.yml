@@ -36,6 +36,8 @@ jobs:
           python -c "from asterisk_ai_voice_agent import audiosocket, tools, stt, llm, tts, agent; print('imports ok')"
       - name: Behaviour - unregistered UUIDs are rejected
         run: python tests/test_allowlist.py
+      - name: Behaviour - accepted AudioSocket connections have Nagle off
+        run: python tests/test_nodelay.py
 
   package:
     runs-on: ubuntu-latest

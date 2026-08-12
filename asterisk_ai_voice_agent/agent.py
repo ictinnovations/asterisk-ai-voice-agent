@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import re
+import socket
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -359,6 +360,14 @@ async def main() -> None:
 
     # --- AudioSocket TCP server -------------------------------------------
     async def on_call(reader, writer):
+        # Outbound audio is one 320-byte frame every 20 ms, which is exactly the
+        # small-write pattern Nagle delays while it waits for more data to coalesce.
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError as e:
+                log.warning("could not set TCP_NODELAY: %s", e)
         async with sem:
             try:
                 await Call(reader, writer, cfg, personas, registry).run()
