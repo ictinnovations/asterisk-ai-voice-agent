@@ -5,6 +5,8 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-12
+
 ### Security
 - The persona registry is now a strict allowlist. An AudioSocket connection whose
   UUID was never pre-registered by the dialplan is dropped instead of being served
@@ -59,4 +61,5 @@ from the platform (multi-tenancy, billing, internal REST), and made config-drive
 - TTS/STT/LLM providers beyond those listed require implementing the module
   interface (see PORTING.md).
 
+[0.1.2]: https://github.com/ictinnovations/asterisk-ai-voice-agent/releases/tag/v0.1.2
 [0.1.0]: https://github.com/ictinnovations/asterisk-ai-voice-agent/releases/tag/v0.1.0
