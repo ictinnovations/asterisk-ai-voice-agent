@@ -152,6 +152,7 @@ Your endpoint returns a JSON result, which is fed back to the LLM as the tool re
 | Call drops instantly, log says `rejecting unregistered UUID` | The dialplan pre-register curl didn't reach the sidecar, so the UUID isn't on the allowlist. Confirm `register_port` (default 9091) is reachable from Asterisk and not firewalled; check for the `register` line in the sidecar log. Since 0.1.2 an unregistered UUID is dropped rather than served the `demo` persona. |
 | Remote Asterisk can't reach the sidecar | Set `listen.host: 0.0.0.0` in `config.yaml`, publish ports instead of `network_mode: host`, and **firewall 9091/9092**. Never expose them publicly. |
 | Barge-in doesn't interrupt | `interrupt_enabled: true` on the persona, and your `stt.is_speech()` VAD must return `True` on caller speech. |
+| Transcripts start **mid-word** | The VAD's onset lag was dropping the head of the first word. Fixed by the 300 ms lookback buffer (`LOOKBACK_MS` in `stt.py`); raise it if your callers are still being clipped. |
 | Tools do nothing | `tools.webhook_url` unset, or the persona's `tools_enabled` is empty, or the named tool isn't in `TOOL_SPECS` (`tools.py`). |
 
 Logs: set `AI_AGENT_LOG=DEBUG` (env or compose) for per-frame detail.

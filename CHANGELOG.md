@@ -5,6 +5,26 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- The start of the first word of an utterance is no longer clipped. WebRTC VAD
+  only calls a frame voiced once the talk-spurt carries enough energy, so a quiet
+  onset (a leading fricative, the closure before a plosive) was discarded before
+  the utterance buffer opened and the transcript began mid-word. The STT now keeps
+  a rolling 300 ms window of pre-onset frames and prepends it when the utterance
+  starts. It is most audible after barge-in, where the caller's first word
+  competes with the agent still speaking. Suggested by `Asteriskdev` on
+  r/Asterisk.
+
+  One ring buffer per call, filled only while no utterance is open and drained at
+  each talk-spurt, so the cost is fixed at 4.8 kB per call. The prepended audio is
+  deliberately not counted towards `voice_ms`, which is what bounds the
+  hallucination word-density check.
+
+### Added
+- `tests/test_lookback.py`, which drives `feed()` with a scripted VAD and asserts
+  the pre-onset frames arrive at the transcriber, that the window stays bounded,
+  and that `voice_ms` still counts only genuinely voiced audio.
+
 ## [0.1.2] - 2026-08-12
 
 ### Security

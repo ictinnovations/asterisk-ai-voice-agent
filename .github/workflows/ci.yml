@@ -38,6 +38,8 @@ jobs:
         run: python tests/test_allowlist.py
       - name: Behaviour - accepted AudioSocket connections have Nagle off
         run: python tests/test_nodelay.py
+      - name: Behaviour - the word onset before VAD pickup is not clipped
+        run: python tests/test_lookback.py
 
   package:
     runs-on: ubuntu-latest

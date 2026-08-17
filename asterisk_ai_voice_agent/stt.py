@@ -16,6 +16,8 @@ Design notes
 - There is no true streaming STT here; we VAD-gate instead.
 - VAD frames are 20 ms (320 bytes) - matches the AudioSocket frame size.
 - An utterance "ends" after MIN_SILENCE_MS of silence following speech.
+- A LOOKBACK_MS ring buffer of pre-onset frames is prepended to each utterance
+  so the VAD's detection lag does not clip the first word.
 - Both APIs accept WAV; we wrap the buffered PCM as a single WAV.
 
 Derived from ICTContact (https://www.ictcontact.com).
@@ -28,7 +30,8 @@ import io
 import logging
 import re
 import wave
-from typing import AsyncIterator, List, Optional
+from collections import deque
+from typing import AsyncIterator, Deque, List, Optional
 
 import webrtcvad
 from openai import AsyncOpenAI
@@ -47,6 +50,16 @@ MAX_UTTERANCE_MS = 30000 # hard cap (Whisper API per-request limit ~25 MB)
 # report the caller as actively speaking. The sustained-run requirement filters
 # out clicks/coughs so the agent isn't cut off by noise.
 BARGE_VOICE_RUN_FRAMES = 12
+# The VAD only calls a frame voiced once the talk-spurt carries enough energy,
+# so a quiet word onset - a leading fricative, the closure before a plosive - is
+# already discarded by the time the utterance opens and the transcript starts
+# mid-word. Most audible after barge-in, where the caller's first word competes
+# with the agent still speaking. Hold the most recent unvoiced frames and
+# prepend them at onset. One ring buffer per call, drained at each talk-spurt,
+# so the cost stays at LOOKBACK_FRAMES * FRAME_BYTES (4.8 kB) however long the
+# call runs.
+LOOKBACK_MS     = 300
+LOOKBACK_FRAMES = LOOKBACK_MS // 20
 # Whisper hallucinates short pleasantries ("Thank you.", ". .") on near-silence.
 # Real speech can't pack more than ~8 words into each second of VOICED audio;
 # transcripts denser than that are junk and get dropped.
@@ -91,6 +104,8 @@ class StreamingSTT:
         self._voice_ms  = 0
         self._silence_ms = 0
         self._voice_run = 0          # consecutive voiced frames (barge-in signal)
+        # Pre-onset frames, kept only while no utterance is open.
+        self._lookback: Deque[bytes] = deque(maxlen=LOOKBACK_FRAMES)
         self._utterance_started = False
         self._out_queue: asyncio.Queue = asyncio.Queue()
         # Wall-clock arrival time of the last frame (loop.time()); drives DTX
@@ -173,6 +188,9 @@ class StreamingSTT:
             log.debug("vad error: %s", e)
 
         if is_voice:
+            if not self._utterance_started:
+                self._buf.extend(b"".join(self._lookback))
+                self._lookback.clear()
             self._utterance_started = True
             self._voice_ms += 20
             self._voice_run += 1
@@ -184,6 +202,8 @@ class StreamingSTT:
             self._buf.extend(samples)   # keep trailing silence for a natural cutoff
             if self._voice_ms >= MIN_VOICE_MS and self._silence_ms >= self.min_silence_ms:
                 await self._flush()
+        else:
+            self._lookback.append(samples)
 
         # Hard cap so memory stays bounded if VAD never sees an end.
         if len(self._buf) > MAX_UTTERANCE_MS * SAMPLE_RATE * 2 // 1000:
