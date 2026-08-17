@@ -5,6 +5,8 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-17
+
 ### Fixed
 - The start of the first word of an utterance is no longer clipped. WebRTC VAD
   only calls a frame voiced once the talk-spurt carries enough energy, so a quiet

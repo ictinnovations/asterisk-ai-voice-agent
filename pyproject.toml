@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asterisk-ai-voice-agent"
-version = "0.1.2"
+version = "0.1.3"
 description = "Self-hosted AI voice agent for Asterisk. Streaming speech-to-text to LLM to text-to-speech over AudioSocket, with barge-in and correct 20 ms frame pacing."
 readme = "README.md"
 requires-python = ">=3.10"
