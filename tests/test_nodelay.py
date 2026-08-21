@@ -38,10 +38,10 @@ async def main() -> None:
     seen: asyncio.Queue = asyncio.Queue()
 
     class _Probe:
-        def __init__(self, _reader, writer, *_a):
-            sock = writer.get_extra_info("socket")
+        def __init__(self, transport, *_a):
+            sock = transport.writer.get_extra_info("socket")
             seen.put_nowait(sock.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
-            writer.close()
+            transport.writer.close()
 
         async def run(self):
             pass

@@ -38,7 +38,7 @@ from typing import Dict, Optional
 import yaml
 import httpx
 
-from .audiosocket import Frame, FrameType, audio_frame, parse_uuid, FRAME_BYTES, FRAME_SEC, SILENCE_FRAME
+from .transport import AudioSocketTransport, Transport
 from .stt import StreamingSTT
 from .llm import LLM
 from .tts import StreamingTTS
@@ -55,7 +55,6 @@ log = logging.getLogger("ai.agent")
 # chunk too.
 _SENT_END = re.compile(r"([.!?؟।۔]\s|[,;:]\s(?=\S))")
 _MD_STRIP = re.compile(r"[*_`#~]+")
-PREROLL_FRAMES = 5   # silence frames before a talk-spurt so far-end codecs ramp up
 
 
 def load_yaml(path: str) -> dict:
@@ -87,11 +86,10 @@ class Registry:
 
 
 class Call:
-    """One AI conversation over a single AudioSocket connection."""
+    """One AI conversation over a single media connection."""
 
-    def __init__(self, reader, writer, cfg: dict, personas: dict, registry: Registry):
-        self.reader = reader
-        self.writer = writer
+    def __init__(self, transport: Transport, cfg: dict, personas: dict, registry: Registry):
+        self.transport = transport
         self.cfg = cfg
         self.personas = personas
         self.registry = registry
@@ -106,28 +104,15 @@ class Call:
         self.started = time.monotonic()
         self._transcript = []
 
-    # ---- outbound audio (paced) -------------------------------------------
-    async def _paced_write(self, pcm_iter):
-        """Write TTS frames metered to the 20 ms clock with a per-frame deadline
-        clamp, so synthesis latency never causes a burst that overruns the far
-        end's jitter buffer. This is the AudioSocket pacing gotcha, solved."""
+    # ---- outbound audio ----------------------------------------------------
+    def _should_stop(self) -> bool:
+        """Barge-in or hangup. The transport polls this to cut playback short."""
+        return self.interrupt or self.ended
+
+    async def _play(self, pcm_iter):
         self.speaking = True
         try:
-            for _ in range(PREROLL_FRAMES):
-                self.writer.write(audio_frame(SILENCE_FRAME).encode())
-            deadline = time.monotonic()
-            async for chunk in pcm_iter:
-                if self.interrupt or self.ended:   # barge-in / hangup: stop now
-                    break
-                if len(chunk) < FRAME_BYTES:
-                    chunk = chunk + b"\x00" * (FRAME_BYTES - len(chunk))
-                self.writer.write(audio_frame(chunk).encode())
-                await self.writer.drain()
-                deadline += FRAME_SEC
-                now = time.monotonic()
-                if deadline < now:                 # clamp: never schedule in the past
-                    deadline = now
-                await asyncio.sleep(deadline - now)
+            await self.transport.play(pcm_iter, self._should_stop)
         except (ConnectionResetError, BrokenPipeError):
             self.ended = True
         finally:
@@ -138,7 +123,7 @@ class Call:
         if not text or self.tts is None or self.ended:
             return
         self._transcript.append({"role": "agent", "text": text})
-        await self._paced_write(self.tts.synthesise(text))
+        await self._play(self.tts.synthesise(text))
 
     # ---- tool calling ------------------------------------------------------
     async def run_tool(self, name: str, args: dict) -> dict:
@@ -162,15 +147,10 @@ class Call:
 
     # ---- main entry --------------------------------------------------------
     async def run(self) -> None:
-        # 1. UUID frame + persona lookup
-        try:
-            first = await Frame.read(self.reader)
-        except asyncio.IncompleteReadError:
+        # 1. transport handshake + persona lookup
+        self.uuid = await self.transport.handshake()
+        if not self.uuid:
             return
-        if not first or first.type != FrameType.UUID:
-            log.warning("expected UUID frame, got %s", first and first.type)
-            return
-        self.uuid = parse_uuid(first.payload)
         ctx = self.registry.take(self.uuid)
         if not ctx:
             # The dialplan pre-registers every UUID before it dials AudioSocket, so an
@@ -246,15 +226,12 @@ class Call:
             if time.monotonic() - self.started > max_secs:
                 log.info("call %s hit max_call_seconds", self.uuid)
                 return
-            try:
-                frame = await Frame.read(self.reader)
-            except (asyncio.IncompleteReadError, ConnectionResetError):
+            chunk = await self.transport.read_audio()
+            if chunk is None:
                 return
-            if frame is None or frame.type == FrameType.HANGUP:
-                return
-            if frame.type != FrameType.AUDIO:
+            if not chunk:
                 continue
-            await self.stt.feed(frame.payload)
+            await self.stt.feed(chunk)
             if interrupt_enabled and self.speaking and self.stt.voice_active:
                 self.interrupt = True   # caller talked over the agent
 
@@ -322,10 +299,7 @@ class Call:
                     await comp.close()
                 except Exception:
                     pass
-        try:
-            self.writer.close()
-        except Exception:
-            pass
+        await self.transport.close()
         log.info("call %s ended (%d turns)", self.uuid, len(self._transcript))
 
 
@@ -370,7 +344,7 @@ async def main() -> None:
                 log.warning("could not set TCP_NODELAY: %s", e)
         async with sem:
             try:
-                await Call(reader, writer, cfg, personas, registry).run()
+                await Call(AudioSocketTransport(reader, writer), cfg, personas, registry).run()
             except Exception:
                 log.exception("call handler crashed")
 

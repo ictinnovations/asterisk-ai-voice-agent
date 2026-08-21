@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from asterisk_ai_voice_agent import agent as ag
 from asterisk_ai_voice_agent.audiosocket import FrameType
+from asterisk_ai_voice_agent.transport import AudioSocketTransport
 
 CALL_UUID = "11111111-2222-3333-4444-555555555555"
 
@@ -58,14 +59,16 @@ async def main() -> None:
     personas = {"demo": {"greeting": "hi"}, "sales": {"greeting": "hello"}}
 
     registry = ag.Registry()
-    call = ag.Call(_reader_with_uuid(CALL_UUID), _Writer(), {}, personas, registry)
+    call = ag.Call(AudioSocketTransport(_reader_with_uuid(CALL_UUID), _Writer()),
+                   {}, personas, registry)
     await call.run()
     assert call.persona == {}, f"unregistered UUID was served persona {call.persona!r}"
     print("ok: unregistered UUID rejected before the pipeline is built")
 
     registry = ag.Registry()
     registry.register({"uuid": CALL_UUID, "persona": "sales", "caller": "1001"})
-    call = ag.Call(_reader_with_uuid(CALL_UUID), _Writer(), {}, personas, registry)
+    call = ag.Call(AudioSocketTransport(_reader_with_uuid(CALL_UUID), _Writer()),
+                   {}, personas, registry)
     try:
         await call.run()
     except _ReachedPipeline:

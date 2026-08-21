@@ -5,6 +5,19 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Changed
+- Outbound media now goes through a `Transport` interface (`transport.py`) instead
+  of `Call` holding an asyncio reader/writer pair directly. `AudioSocketTransport`
+  is the only implementation and behaviour is unchanged; the 20 ms metered writer
+  moved from `Call._paced_write` to `AudioSocketTransport.play` verbatim.
+
+  The split is at `play()` rather than at frame encoding, because that is where
+  AudioSocket and `chan_websocket` genuinely differ: under AudioSocket we own the
+  playout clock and must not queue ahead, since queued audio cannot be taken back
+  on barge-in, whereas `chan_websocket` lets Asterisk pace and `FLUSH_MEDIA` takes
+  queued audio back. Measured on Asterisk 22.10.1: 18 s queued, flushed after 2 s,
+  and not one flushed byte reached the caller.
+
 ### Added
 - `packaging/systemd/asterisk-ai-voice-agent.service`, so a pip install can run
   as a service without Docker. Runs as a dedicated unprivileged system user,
