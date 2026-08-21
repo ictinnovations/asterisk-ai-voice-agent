@@ -1,0 +1,39 @@
+[Unit]
+Description=Asterisk AI voice agent (AudioSocket STT/LLM/TTS sidecar)
+Documentation=https://github.com/ictinnovations/asterisk-ai-voice-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aivoiceagent
+Group=aivoiceagent
+WorkingDirectory=/var/lib/asterisk-ai-voice-agent
+Environment=AI_AGENT_CONFIG=/etc/asterisk-ai-voice-agent/config.yaml
+Environment=AI_AGENT_PERSONAS=/etc/asterisk-ai-voice-agent/personas.yaml
+Environment=AI_AGENT_LOG=INFO
+ExecStart=/usr/local/bin/asterisk-ai-voice-agent
+Restart=on-failure
+RestartSec=2s
+
+StateDirectory=asterisk-ai-voice-agent
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+# Each concurrent call peaks around 150 MB during synthesis. Size this to
+# limits.max_concurrent_calls in config.yaml rather than leaving it unbounded.
+#MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

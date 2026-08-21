@@ -61,6 +61,30 @@ cp personas.example.yaml personas.yaml
 AI_AGENT_CONFIG=config.yaml AI_AGENT_PERSONAS=personas.yaml asterisk-ai-voice-agent
 ```
 
+## Running as a systemd service
+
+For a pip install on a host that isn't running Docker, [`packaging/systemd/asterisk-ai-voice-agent.service`](./packaging/systemd/asterisk-ai-voice-agent.service) runs the sidecar as an unprivileged system user:
+
+```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin aivoiceagent
+
+# Config holds API keys, so keep it root-owned and group-readable only.
+sudo install -d -m 0750 -o root -g aivoiceagent /etc/asterisk-ai-voice-agent
+sudo install -m 0640 -o root -g aivoiceagent \
+     config.example.yaml /etc/asterisk-ai-voice-agent/config.yaml
+sudo install -m 0640 -o root -g aivoiceagent \
+     personas.example.yaml /etc/asterisk-ai-voice-agent/personas.yaml
+
+sudo install -m 0644 packaging/systemd/asterisk-ai-voice-agent.service \
+     /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now asterisk-ai-voice-agent
+```
+
+Logs go to the journal: `journalctl -u asterisk-ai-voice-agent -f`. Startup takes a few seconds before the ports bind, because importing numpy and the provider SDKs dominates it.
+
+If you installed into a virtualenv rather than system-wide, point `ExecStart=` at that interpreter's `asterisk-ai-voice-agent`. Piper voices download into `/var/lib/asterisk-ai-voice-agent/voices`, which systemd creates via `StateDirectory=`; that is the only path the service can write to. The unit sets `ProtectSystem=strict`, so `/etc/asterisk-ai-voice-agent` stays read-only to the running process.
+
 Add to your Asterisk `extensions.conf`:
 
 ```asterisk

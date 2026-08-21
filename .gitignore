@@ -3,6 +3,9 @@ personas.yaml
 voices/
 __pycache__/
 *.pyc
+build/
+dist/
+*.egg-info/
 .venv/
 venv/
 *.log

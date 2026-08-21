@@ -5,6 +5,14 @@ Notable changes to this project. Format follows
 
 ## [Unreleased]
 
+### Added
+- `packaging/systemd/asterisk-ai-voice-agent.service`, so a pip install can run
+  as a service without Docker. Runs as a dedicated unprivileged system user,
+  restarts on failure, and keeps `/etc/asterisk-ai-voice-agent` read-only to the
+  process via `ProtectSystem=strict`, because the config file holds API keys.
+  Piper voices live in a `StateDirectory=`, which is the only writable path.
+  Requested by `crystalsighting` on r/Asterisk.
+
 ## [0.1.3] - 2026-08-17
 
 ### Fixed
