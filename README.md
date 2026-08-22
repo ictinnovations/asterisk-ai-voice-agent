@@ -36,6 +36,29 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 
 The AudioSocket framing/pacing lives in a standalone, tested package: [`asterisk-audiosocket`](https://www.npmjs.com/package/asterisk-audiosocket) (Node/TypeScript), and in [`asterisk_ai_voice_agent/audiosocket.py`](./asterisk_ai_voice_agent/audiosocket.py) here (Python). Same wire protocol, pick your language.
 
+### chan_websocket (optional, Asterisk 20.18+ / 22.8+)
+
+AudioSocket is the default and needs no extra config. If you're on a new enough Asterisk you can use `chan_websocket` instead by uncommenting `websocket_port` in `config.yaml`. Both transports can run at once.
+
+The difference that matters is who owns the playout clock. Under AudioSocket we own it, so queue depth sets the barge-in floor and we meter every frame. Under `chan_websocket` Asterisk owns it and `FLUSH_MEDIA` takes queued audio back, so the sidecar buffers 2 s ahead and still cuts off instantly when the caller interrupts. Measured on 22.10.1: 18 s queued, flushed after 2 s, and not one flushed byte reached the caller.
+
+Two things to get right, both of which fail quietly otherwise:
+
+```ini
+; chan_websocket.conf — the driver defaults to a plain-text format we don't parse
+[global]
+control_message_format = json
+```
+
+```
+; The dial string must carry the call id. chan_websocket has no UUID frame, and
+; the connection_id in websocket_client.conf is the same on every call.
+; Commas become '&' in the query string, because Dial() reads '&' as more channels.
+same = n,Dial(WebSocket/conn1/c(slin),v(uuid=${CALLUUID}))
+```
+
+The id arrives with the HTTP handshake, i.e. *before* any media, so an unregistered call is refused before a pipeline is ever built. Channel variables also reach the sidecar in `MEDIA_START`, but note that `Set(__FOO=x)` arrives under the literal key `__FOO`, prefix included; `Set(_FOO=x)` arrives as `FOO`.
+
 > **A word on pacing.** `app_audiosocket` shoves each AUDIO frame at the channel the moment it arrives. So if you synthesize a sentence and write it all at once, you overrun the far end's jitter buffer and the caller hears only the tail of every phrase, which is baffling until you figure out why. The sidecar meters outbound audio to the 20 ms frame clock and re-clamps the deadline every frame, so a slow TTS response can't make it burst to catch up. We learned this one the hard way in production; if you roll your own, steal this bit.
 
 ## Quick start (Docker)

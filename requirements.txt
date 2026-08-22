@@ -5,3 +5,4 @@ anthropic>=0.40
 openai>=1.50
 piper-tts==1.2.0
 webrtcvad-wheels>=2.0.10
+websockets>=13.0

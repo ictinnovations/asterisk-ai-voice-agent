@@ -37,8 +37,9 @@ from typing import Dict, Optional
 
 import yaml
 import httpx
+from websockets.asyncio.server import serve
 
-from .transport import AudioSocketTransport, Transport
+from .transport import AudioSocketTransport, Transport, WebSocketTransport
 from .stt import StreamingSTT
 from .llm import LLM
 from .tts import StreamingTTS
@@ -348,13 +349,31 @@ async def main() -> None:
             except Exception:
                 log.exception("call handler crashed")
 
+    # --- chan_websocket server (optional; Asterisk connects out to us) -----
+    async def on_ws_call(ws):
+        async with sem:
+            try:
+                await Call(WebSocketTransport(ws), cfg, personas, registry).run()
+            except Exception:
+                log.exception("websocket call handler crashed")
+
     reg_srv = await asyncio.start_server(http_register, host, int(listen.get("register_port", 9091)))
     as_srv = await asyncio.start_server(on_call, host, int(listen.get("audiosocket_port", 9092)))
     log.info("ai-voice-agent up: AudioSocket %s:%s, register %s:%s, personas=%s",
              host, listen.get("audiosocket_port", 9092),
              host, listen.get("register_port", 9091), list(personas))
-    async with reg_srv, as_srv:
-        await asyncio.gather(reg_srv.serve_forever(), as_srv.serve_forever())
+
+    ws_port = listen.get("websocket_port")
+    if not ws_port:
+        async with reg_srv, as_srv:
+            await asyncio.gather(reg_srv.serve_forever(), as_srv.serve_forever())
+        return
+
+    async with reg_srv, as_srv, await serve(on_ws_call, host, int(ws_port),
+                                            subprotocols=["media"]) as ws_srv:
+        log.info("chan_websocket listening on %s:%s", host, ws_port)
+        await asyncio.gather(reg_srv.serve_forever(), as_srv.serve_forever(),
+                             ws_srv.wait_closed())
 
 
 def cli() -> None:

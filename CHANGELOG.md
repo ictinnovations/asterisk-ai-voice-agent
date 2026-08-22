@@ -19,6 +19,30 @@ Notable changes to this project. Format follows
   and not one flushed byte reached the caller.
 
 ### Added
+- `WebSocketTransport`, so the sidecar can also run over `chan_websocket` on
+  Asterisk 20.18+/22.8+. Off unless `listen.websocket_port` is set; AudioSocket
+  remains the default and both can run at once.
+
+  Asterisk owns the playout clock here, so `play()` hands audio over ahead of
+  real time and waits out the remainder rather than metering frames, and
+  barge-in sends `FLUSH_MEDIA` instead of simply ceasing to write. It buffers
+  2 s ahead: enough to ride out a TTS stall, and far clear of the 900-frame
+  (18 s) `MEDIA_XOFF` watermark. Queueing deeper would cost nothing in barge-in
+  latency but buys nothing either.
+
+  `chan_websocket` has no UUID frame, and the `connection_id` is identical on
+  every call, so the persona allowlist would have had nothing to key on. The
+  call id comes from the dial string instead —
+  `Dial(WebSocket/conn1/c(slin),v(uuid=${CALLUUID}))` — which arrives as a query
+  parameter on the HTTP handshake, before any media. So an unregistered call is
+  still refused before a pipeline is built, marginally earlier than AudioSocket
+  manages. Verified on 22.10.1, along with the `Set(__FOO=)`/`Set(_FOO=)`
+  distinction noted in the README.
+- `tests/test_websocket_transport.py`, which drives the transport against a fake
+  chan_websocket peer and asserts the three behaviours that would otherwise fail
+  silently: the id is read from the handshake URI, playback runs ahead of real
+  time yet `play()` still returns only once the caller has heard it, and
+  barge-in emits `FLUSH_MEDIA`. Wired into CI.
 - `packaging/systemd/asterisk-ai-voice-agent.service`, so a pip install can run
   as a service without Docker. Runs as a dedicated unprivileged system user,
   restarts on failure, and keeps `/etc/asterisk-ai-voice-agent` read-only to the

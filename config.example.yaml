@@ -5,6 +5,11 @@ listen:
   host: 127.0.0.1        # keep AudioSocket loopback-only
   audiosocket_port: 9092 # Asterisk AudioSocket() dials this
   register_port: 9091    # tiny HTTP endpoint the dialplan pre-registers persona to
+  # websocket_port: 9093 # optional: chan_websocket (Asterisk 20.18+/22.8+).
+                         # Needs control_message_format = json in chan_websocket.conf,
+                         # and the dial string must carry the call id:
+                         #   Dial(WebSocket/conn1/c(slin),v(uuid=${CALLUUID}))
+                         # Leave commented out to run AudioSocket only.
 
 providers:
   anthropic:
