@@ -3,7 +3,7 @@
 Notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.1.5] - 2026-09-05
 
 ### Fixed
 - Sentence N+1 now synthesises while sentence N is still playing. `say()` played
@@ -40,6 +40,18 @@ Notable changes to this project. Format follows
   because a gap between sentences still delivers every word. Covers overlap,
   boundary gap, barge-in stopping both synthesis and playback, the lookahead
   bound, and an empty turn. Wired into CI.
+
+
+### Notes
+- Investigated and closed #3 (the process-wide Piper lock) without a code change.
+  Moving synthesis into worker processes was measured against the lock in the
+  shipped image with a real voice, four concurrent calls, five trials: 2.30 s
+  against 1.99 s total, and the first caller waited 1.89 s instead of 0.48 s.
+  Worse on every axis. ONNX Runtime already parallelises a single render across
+  every core, so the lock serialises work that is already saturating the CPU, and
+  the pool only adds contention, IPC, and the loss of FIFO ordering. Capping each
+  worker to one ONNX thread was worse again, 5.41 s against 2.00 s. The ceiling is
+  CPU, not the lock. Full numbers on the issue.
 
 ## [0.1.4] - 2026-09-04
 
