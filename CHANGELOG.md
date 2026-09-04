@@ -3,6 +3,70 @@
 Notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.6] - 2026-09-05
+
+### Fixed
+- Closing an interrupted turn no longer cancels a Piper render that is under the
+  voice lock. `_TurnSpeaker.close()` cancelled the synthesis task outright, and
+  when a barge-in landed while the next sentence was rendering, the cancel hit
+  the `to_thread` await inside the `_VOICE_LOCK` context and released the lock
+  while espeak-ng was still running in the worker thread. The next render, from
+  this call or any other, then entered Piper concurrently, which is the
+  thread-safety problem the lock exists to prevent and which 0.1.4 had
+  deliberately avoided on the polling path. `close()` now asks the loop to stop
+  and waits for it: `_put` returns as soon as it polls and `synthesise` discards
+  a finished render unplayed, so the task ends by itself once the in-flight
+  render returns. Cancel remains as a 20 s backstop for a provider that hangs.
+
+  Measured in the shipped image with the real voice, barging in five frames
+  into a turn while the second sentence rendered, then rendering from a second
+  call straight away:
+
+  | | close() | task | concurrent Piper renders | second call's render |
+  |---|---|---|---|---|
+  | 0.1.5 | 0.00 s | cancelled | 2 | 2.14 s |
+  | 0.1.6 | 1.32 s | finished | 1 | 1.32 s |
+
+  The wait is the remainder of the render that was already in flight. Nothing
+  about the barge-in itself changes: playback still stops at the next frame,
+  and the discarded render was never going to be heard either way.
+
+- A barge-in no longer corrupts the conversation history. Breaking out of the
+  LLM stream skipped the assistant append, so the model never learned it had
+  said anything, and if it had already asked for a tool before the caller cut
+  in, the tool still ran and its result was appended against a tool_use that
+  was never recorded. The API rejects that request and every request after it,
+  so one badly timed interrupt left the caller hearing only the apology line for
+  the rest of the call. After an interrupt the last assistant message is now the
+  sentences that actually reached the transport (to sentence granularity: the
+  one that was cut off is kept in full, since the model should know what it was
+  saying), any tool_use is dropped with the tools it named, and the abandoned
+  API stream is closed at once rather than when the generator is collected.
+
+- TTS chunks are cut at sentence ends only. The splitter fired on every comma,
+  semicolon and colon, so each clause played as its own utterance and the voice
+  lost the run of the sentence at each cut, and it took any full stop before
+  whitespace as a sentence end, so "Dr. Smith", "e.g. tea", "J. Smith" and
+  "1. Restart the phone" were cut in half. Sentence terminators now need
+  whitespace after them and are ignored after a known abbreviation, an initial
+  or a list number; clause breaks are used only once a sentence has run past
+  120 characters, so a long one still starts playing before the model finishes
+  it. The Urdu and Devanagari terminators are unchanged.
+
+### Changed
+- The 8 kHz format is now called `slin` throughout the README, PORTING.md and
+  the module docstrings. In Asterisk naming `slin` is 16-bit signed linear at
+  8 kHz and `slin16` is the same at 16 kHz, so 320 bytes per 20 ms is plain
+  `slin`; the old label would have led anyone copying the numbers into a 16 kHz
+  setup to 10 ms frames. Nothing on the wire changes.
+
+### Added
+- `tests/test_sentence_split.py` and `tests/test_interrupted_turn.py`, the
+  latter driving the real `LLM` and `Call` classes through a scripted Anthropic
+  stream, plus three new cases in `tests/test_turn_speaker.py` covering the
+  close-without-cancel path, the hung-provider backstop and `spoken_text()`.
+  All wired into CI.
+
 ## [0.1.5] - 2026-09-05
 
 ### Fixed
