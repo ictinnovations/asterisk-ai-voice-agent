@@ -3,7 +3,30 @@
 Notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.1.4] - 2026-09-04
+
+### Fixed
+- Barge-in now reaches synthesis. `Call._should_stop()` was polled only by the
+  transports, inside the loop that consumes frames, so it could not run until
+  synthesis had produced a frame. `StreamingTTS.synthesise()` renders a whole
+  sentence before yielding its first one, which meant a caller who interrupted
+  while we were still rendering had no effect at all: the sentence was built in
+  full, then playback stopped at frame zero. The stop check is now passed into
+  `synthesise()` and polled around synthesis as well as between frames.
+
+  On the ElevenLabs path this closes the HTTP stream, so an interrupted sentence
+  stops being billed. On the Piper path the render is deliberately *not*
+  cancelled: it runs in a worker thread under the process-wide `_VOICE_LOCK`, and
+  abandoning the await would release that lock while espeak-ng still held the
+  voice, which is the thread-safety problem the lock exists to prevent. Piper is
+  checked either side of the render instead, so the audio is discarded rather
+  than played. (#4)
+- ElevenLabs audio now streams. The `/stream` endpoint was already being called,
+  but the response was consumed with `resp.content`, which waits for the whole
+  body, so the caller heard nothing until the entire utterance had been
+  synthesised. The response is now read with `aiter_bytes()`, resampled
+  incrementally and yielded frame by frame, so first audio lands at roughly
+  time-to-first-byte. (#1)
 
 ### Changed
 - Outbound media now goes through a `Transport` interface (`transport.py`) instead
@@ -49,6 +72,17 @@ Notable changes to this project. Format follows
   process via `ProtectSystem=strict`, because the config file holds API keys.
   Piper voices live in a `StateDirectory=`, which is the only writable path.
   Requested by `crystalsighting` on r/Asterisk.
+
+- `_StreamResampler`, a linear resampler that can be fed in chunks without a
+  seam at each join. `_resample_linear` interpolates across `linspace(0, N-1)`,
+  so its step depends on the total length and it cannot be used on a stream; the
+  streaming one holds a fixed ratio and carries the unconsumed input samples and
+  fractional read position between calls.
+- `tests/test_tts_stream.py`, covering both fixes plus the resampler: chunked
+  output is seam-free at any chunk size, a 220 Hz tone stays 220 Hz, the first
+  frame is available from the first network chunk, a stop mid-stream abandons
+  the response rather than draining it, and Piper audio rendered during a
+  barge-in is discarded rather than played. Wired into CI.
 
 ## [0.1.3] - 2026-08-17
 

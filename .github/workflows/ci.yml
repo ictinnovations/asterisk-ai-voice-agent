@@ -42,6 +42,8 @@ jobs:
         run: python tests/test_lookback.py
       - name: Behaviour - chan_websocket identity, pacing and barge-in
         run: python tests/test_websocket_transport.py
+      - name: Behaviour - TTS streams, and barge-in reaches synthesis
+        run: python tests/test_tts_stream.py
 
   package:
     runs-on: ubuntu-latest

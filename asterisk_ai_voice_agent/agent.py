@@ -124,7 +124,9 @@ class Call:
         if not text or self.tts is None or self.ended:
             return
         self._transcript.append({"role": "agent", "text": text})
-        await self._play(self.tts.synthesise(text))
+        # Pass the stop check into synthesis too. The transport only polls it
+        # between frames, which cannot happen until synthesis has produced one.
+        await self._play(self.tts.synthesise(text, self._should_stop))
 
     # ---- tool calling ------------------------------------------------------
     async def run_tool(self, name: str, args: dict) -> dict:

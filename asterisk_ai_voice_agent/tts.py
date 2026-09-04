@@ -92,6 +92,67 @@ def _resample_linear(pcm16: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
     return out.astype(np.int16)
 
 
+class _StreamResampler:
+    """Linear resampler that can be fed in chunks without a seam at each join.
+
+    `_resample_linear` interpolates across a whole utterance. Calling it once per
+    network chunk would restart the interpolation at every boundary and leave a
+    small discontinuity there, so this keeps the unconsumed input samples and the
+    fractional read position between calls.
+    """
+
+    def __init__(self, src_sr: int, dst_sr: int):
+        self.step = (src_sr / dst_sr) if dst_sr else 1.0
+        self.passthrough = (src_sr == dst_sr)
+        self._tail = np.zeros(0, dtype=np.int16)
+        self._t = 0.0                      # next output position, in input samples
+
+    def feed(self, pcm16: np.ndarray) -> np.ndarray:
+        if self.passthrough:
+            return pcm16
+        buf = np.concatenate((self._tail, pcm16)) if self._tail.size else pcm16
+        if buf.size < 2:
+            self._tail = buf
+            return np.zeros(0, dtype=np.int16)
+        # Only positions whose upper neighbour is in the buffer can be produced,
+        # so the last usable position is buf.size - 2, not buf.size - 1.
+        n = int(np.floor((buf.size - 2 - self._t) / self.step)) + 1
+        if n <= 0:
+            self._tail = buf
+            return np.zeros(0, dtype=np.int16)
+        pos = self._t + self.step * np.arange(n, dtype=np.float64)
+        lo = pos.astype(np.int32)
+        frac = (pos - lo).astype(np.float32)
+        out = ((1.0 - frac) * buf[lo].astype(np.float32)
+               + frac * buf[lo + 1].astype(np.float32)).astype(np.int16)
+        consumed = int(lo[-1])
+        self._tail = buf[consumed:]
+        self._t = self._t + self.step * n - consumed
+        return out
+
+    def flush(self) -> np.ndarray:
+        """Emit any output position still inside the buffered input, then reset.
+
+        Never extrapolates. At most one output sample (0.125 ms at 8 kHz) is
+        dropped at the very end of a stream, which is better than inventing one:
+        padding the tail with a copy of the last sample used to push a whole
+        extra frame of near-silence onto the end of every utterance.
+        """
+        buf, self._tail = self._tail, np.zeros(0, dtype=np.int16)
+        t, self._t = self._t, 0.0
+        if self.passthrough or buf.size < 2:
+            return np.zeros(0, dtype=np.int16)
+        n = int(np.floor((buf.size - 1 - t) / self.step)) + 1
+        if n <= 0:
+            return np.zeros(0, dtype=np.int16)
+        pos = t + self.step * np.arange(n, dtype=np.float64)
+        lo = np.minimum(pos.astype(np.int32), buf.size - 1)
+        hi = np.minimum(lo + 1, buf.size - 1)
+        frac = (pos - lo).astype(np.float32)
+        return ((1.0 - frac) * buf[lo].astype(np.float32)
+                + frac * buf[hi].astype(np.float32)).astype(np.int16)
+
+
 def _iter_frames(pcm: np.ndarray):
     """Yield 8 kHz slin16 PCM as 20 ms (320-byte) frames, padding the tail."""
     view = pcm.tobytes()
@@ -161,20 +222,54 @@ class StreamingTTS:
         self._voice = voice
         self._native_sr = self._voice.config.sample_rate
 
-    async def _eleven_pcm(self, text: str) -> np.ndarray:
-        """Synthesize via ElevenLabs; return PCM already resampled to 8 kHz."""
+    async def _eleven_frames(self, text: str, should_stop=None) -> AsyncIterator[bytes]:
+        """Yield 8 kHz 320-byte frames as the ElevenLabs response arrives.
+
+        The endpoint streams, so reading it incrementally puts first audio at
+        roughly time-to-first-byte instead of after the whole utterance has been
+        synthesised. Stopping early closes the HTTP stream, which is also how a
+        barge-in stops us paying for audio nobody will hear.
+        """
         url = ELEVEN_URL_TMPL.format(voice_id=self.voice_id)
         model = self.model if (self.model or "").startswith("eleven") else ELEVEN_DEFAULT_MODEL
-        resp = await self._client.post(
-            url,
+        rs = _StreamResampler(ELEVEN_SAMPLE_RATE, TARGET_SAMPLE_RATE)
+        pending = b""
+        odd = b""            # a chunk can split an int16 down the middle
+        async with self._client.stream(
+            "POST", url,
             params={"output_format": f"pcm_{ELEVEN_SAMPLE_RATE}"},
             headers={"xi-api-key": self.api_key},
             json={"text": text, "model_id": model},
-        )
-        resp.raise_for_status()
-        raw = resp.content
-        pcm = np.frombuffer(raw[: len(raw) // 2 * 2], dtype=np.int16)
-        return _resample_linear(pcm, ELEVEN_SAMPLE_RATE, TARGET_SAMPLE_RATE)
+        ) as resp:
+            if resp.status_code >= 400:
+                await resp.aread()          # body is needed for a useful message
+                resp.raise_for_status()
+            async for raw in resp.aiter_bytes():
+                if should_stop is not None and should_stop():
+                    return
+                if not raw:
+                    continue
+                raw = odd + raw
+                usable = len(raw) // 2 * 2
+                odd = raw[usable:]
+                if not usable:
+                    continue
+                out = rs.feed(np.frombuffer(raw[:usable], dtype=np.int16))
+                if out.size:
+                    pending += out.tobytes()
+                    while len(pending) >= FRAME_BYTES:
+                        yield pending[:FRAME_BYTES]
+                        pending = pending[FRAME_BYTES:]
+                        if should_stop is not None and should_stop():
+                            return
+        tail = rs.flush()
+        if tail.size:
+            pending += tail.tobytes()
+        while len(pending) >= FRAME_BYTES:
+            yield pending[:FRAME_BYTES]
+            pending = pending[FRAME_BYTES:]
+        if pending:
+            yield pending + b"\x00" * (FRAME_BYTES - len(pending))
 
     async def _piper_pcm(self, text: str) -> np.ndarray:
         """Synthesize via local Piper; return PCM already resampled to 8 kHz."""
@@ -197,16 +292,40 @@ class StreamingTTS:
             pcm = _resample_linear(pcm, self._native_sr, TARGET_SAMPLE_RATE)
         return pcm
 
-    async def synthesise(self, text: str) -> AsyncIterator[bytes]:
-        """Yield slin16 PCM bytes in 20 ms (320-byte) chunks."""
+    async def synthesise(self, text: str, should_stop=None) -> AsyncIterator[bytes]:
+        """Yield slin16 PCM bytes in 20 ms (320-byte) chunks.
+
+        `should_stop` is polled around synthesis as well as between frames. The
+        transports already poll it per frame, but that check cannot run until the
+        first frame exists, so without this a barge-in during synthesis had no
+        effect at all and the whole sentence was rendered anyway (issue #4).
+
+        On the ElevenLabs path stopping aborts the HTTP stream. On the Piper path
+        an in-flight render is *not* cancelled: it runs in a worker thread under
+        a process-wide lock, and abandoning the await would release that lock
+        while espeak-ng was still using the voice, which is the thread-safety
+        problem the lock exists to prevent. Piper is checked either side of the
+        render instead, so the audio is discarded rather than played.
+        """
         if not text.strip():
             return
+        if should_stop is not None and should_stop():
+            return
 
-        pcm = None
         if self._eleven and not self._eleven_disabled:
+            produced = False
             try:
-                pcm = await self._eleven_pcm(text)
+                async for chunk in self._eleven_frames(text, should_stop):
+                    produced = True
+                    yield chunk
+                return
             except Exception as exc:
+                if produced:
+                    # Some audio already reached the caller; restarting the
+                    # sentence on piper would repeat what they just heard.
+                    log.warning("elevenlabs stream failed mid-utterance (%s); "
+                                "no fallback for this one", exc)
+                    return
                 status = getattr(getattr(exc, "response", None), "status_code", None)
                 if status in (401, 403):
                     self._eleven_disabled = True
@@ -216,11 +335,16 @@ class StreamingTTS:
                     log.warning("elevenlabs synthesis failed (%s); piper fallback "
                                 "for this utterance", exc)
 
-        if pcm is None:
-            pcm = await self._piper_pcm(text)
+        if should_stop is not None and should_stop():
+            return
+        pcm = await self._piper_pcm(text)
+        if should_stop is not None and should_stop():
+            return          # interrupted while rendering; drop it unplayed
 
         for chunk in _iter_frames(pcm):
             yield chunk
+            if should_stop is not None and should_stop():
+                return
 
     async def close(self) -> None:
         self._voice = None   # cached copy stays in _VOICE_CACHE for reuse
