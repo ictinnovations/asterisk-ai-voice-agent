@@ -86,6 +86,97 @@ class Registry:
         return self._by_uuid.pop((uid or "").lower(), {})
 
 
+# How far synthesis may run ahead of playback, in 20 ms frames. These frames sit
+# in our own queue, not handed to the transport, so they can still be dropped on
+# barge-in; depth here costs nothing in interrupt latency. Two seconds is enough
+# to ride out a synthesis stall without rendering a whole turn eagerly.
+LOOKAHEAD_FRAMES = 100
+
+
+class _TurnSpeaker:
+    """Overlaps synthesis with playback for one assistant turn.
+
+    Speaking a sentence at a time meant `play()` returned only once the caller
+    had heard sentence N, and only then did sentence N+1 start synthesising. Every
+    boundary therefore carried a silent gap equal to the next sentence's synthesis
+    time, on every sentence rather than just the first.
+
+    Here the transport plays from a single frame queue for the whole turn while a
+    synthesis task keeps it fed, so the gap closes to time-to-first-byte of the
+    next sentence, and to nothing at all once synthesis stays ahead.
+    """
+
+    def __init__(self, tts, should_stop, lookahead: int = LOOKAHEAD_FRAMES):
+        self._tts = tts
+        self._should_stop = should_stop
+        self._sentences: asyncio.Queue = asyncio.Queue()
+        # Unbounded on purpose. Lookahead is enforced by _put gating on qsize
+        # instead of by maxsize, so the end-of-turn sentinel can never be
+        # refused: a dropped sentinel would leave frames() waiting for ever.
+        self._frames: asyncio.Queue = asyncio.Queue()
+        self._lookahead = lookahead
+        self._task = None
+
+    def start(self) -> None:
+        self._task = asyncio.create_task(self._synth_loop())
+
+    def add(self, text: str) -> None:
+        self._sentences.put_nowait(text)
+
+    def finish(self) -> None:
+        """No more sentences. Playback ends once the queue drains."""
+        self._sentences.put_nowait(None)
+
+    async def _put(self, frame: bytes) -> bool:
+        """Queue a frame, holding synthesis back to the lookahead depth.
+
+        Gates on qsize rather than a bounded queue so the queue itself can never
+        reject a put, and stays responsive to barge-in while held back.
+        """
+        while self._frames.qsize() >= self._lookahead:
+            if self._should_stop():
+                return False
+            await asyncio.sleep(0.01)
+        if self._should_stop():
+            return False
+        self._frames.put_nowait(frame)
+        return True
+
+    async def _synth_loop(self) -> None:
+        try:
+            while True:
+                text = await self._sentences.get()
+                if text is None or self._should_stop():
+                    break
+                async for frame in self._tts.synthesise(text, self._should_stop):
+                    if not await self._put(frame):
+                        return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("synthesis failed mid-turn")
+        finally:
+            # Unblock the player whichever way we left the loop. The queue is
+            # unbounded, so this always lands.
+            self._frames.put_nowait(None)
+
+    async def frames(self):
+        """The whole turn as one stream of 20 ms frames."""
+        while True:
+            frame = await self._frames.get()
+            if frame is None:
+                return
+            yield frame
+
+    async def close(self) -> None:
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
 class Call:
     """One AI conversation over a single media connection."""
 
@@ -261,25 +352,51 @@ class Call:
 
     async def _drive_llm(self) -> None:
         """Stream one assistant turn: speak sentences as they form, collect any
-        tool calls, run them, then loop for the model's follow-up turn."""
+        tool calls, run them, then loop for the model's follow-up turn.
+
+        Sentences go into a `_TurnSpeaker` rather than being played one at a time,
+        so the next one is already synthesising while the current one plays.
+        """
         buf = ""
         pending_tools = []
-        async for ev in self.llm.stream_reply():
-            if self.interrupt or self.ended:
-                break
-            if ev["kind"] == "text":
-                buf += ev["text"]
-                m = _SENT_END.search(buf)
-                while m:
-                    sentence, buf = buf[: m.end()], buf[m.end():]
-                    await self.say(sentence)
+        speaker = _TurnSpeaker(self.tts, self._should_stop)
+        speaker.start()
+        player = asyncio.create_task(self._play(speaker.frames()))
+
+        def queue(text: str) -> None:
+            text = tts_sanitize(text)
+            if not text or self.ended:
+                return
+            self._transcript.append({"role": "agent", "text": text})
+            speaker.add(text)
+
+        try:
+            async for ev in self.llm.stream_reply():
+                if self.interrupt or self.ended:
+                    break
+                if ev["kind"] == "text":
+                    buf += ev["text"]
                     m = _SENT_END.search(buf)
-            elif ev["kind"] == "tool":
-                pending_tools.append(ev)
-            elif ev["kind"] == "end":
-                if buf.strip():
-                    await self.say(buf)
-                    buf = ""
+                    while m:
+                        sentence, buf = buf[: m.end()], buf[m.end():]
+                        queue(sentence)
+                        m = _SENT_END.search(buf)
+                elif ev["kind"] == "tool":
+                    pending_tools.append(ev)
+                elif ev["kind"] == "end":
+                    if buf.strip():
+                        queue(buf)
+                        buf = ""
+        finally:
+            # Let the queued audio finish before tool calls or the next turn.
+            speaker.finish()
+            try:
+                await player
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("playback failed mid-turn")
+            await speaker.close()
         for t in pending_tools:
             result = await self.run_tool(t["name"], t["args"])
             await self.llm.add_tool_result(t["id"], result)

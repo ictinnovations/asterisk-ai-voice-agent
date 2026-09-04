@@ -3,6 +3,44 @@
 Notable changes to this project. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Sentence N+1 now synthesises while sentence N is still playing. `say()` played
+  one sentence at a time and returned only once the caller had heard it, so every
+  sentence boundary carried a silent gap the length of the next sentence's
+  synthesis, on every sentence rather than just the first. A turn now feeds one
+  frame queue that the transport plays from continuously, with synthesis running
+  ahead of playback up to a bounded lookahead. (#2)
+
+  Measured on Asterisk 22.10.1 with `Echo()`, three sentences, using the arrival
+  times of the echoed audio as the caller's experience of the turn:
+
+  | per sentence | before | after |
+  |---|---|---|
+  | 0.5 s synthesis, 0.4 s audio | 2.65 s turn, two 500 ms holes | 1.88 s turn, 120 ms worst gap |
+  | 0.25 s synthesis, 0.5 s audio | n/a | 1.74 s turn, 21 ms worst gap, no holes |
+
+  Overlap cannot create throughput. Where a sentence costs more to synthesise
+  than it takes to play, the pipeline falls behind by that difference on every
+  sentence and the residual gap is the deficit; what goes away is the old gap,
+  which was the entire synthesis time. Where synthesis is faster than playback,
+  which is the usual case, the gap closes completely.
+
+  The lookahead queue is unbounded with synthesis gated on its depth, rather than
+  a bounded queue: a bounded one can refuse the end-of-turn sentinel when it is
+  full, and a dropped sentinel leaves playback waiting for ever.
+
+  A second effect worth knowing about: `speaking` now stays true across the whole
+  turn instead of flickering false at each sentence boundary, so a caller who
+  starts talking in a gap is detected as barge-in rather than missed.
+
+### Added
+- `tests/test_turn_speaker.py`, timing the frames rather than counting them,
+  because a gap between sentences still delivers every word. Covers overlap,
+  boundary gap, barge-in stopping both synthesis and playback, the lookahead
+  bound, and an empty turn. Wired into CI.
+
 ## [0.1.4] - 2026-09-04
 
 ### Fixed
