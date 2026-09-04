@@ -18,7 +18,12 @@ from asterisk_ai_voice_agent.agent import LOOKAHEAD_FRAMES, _TurnSpeaker
 
 FRAME = b"\x00" * 320
 SYNTH_SECS = 0.30          # per sentence
-FRAMES_PER_SENTENCE = 10   # 200 ms of audio
+# 500 ms of audio per sentence, deliberately longer than the 300 ms it costs to
+# synthesise. That is the normal case: when synthesis is faster than playback the
+# pipeline gets ahead and the boundary gap disappears. The reverse case is real
+# too, and there the residual gap is the deficit, not a defect, so the assertion
+# below is written against the deficit rather than against zero.
+FRAMES_PER_SENTENCE = 25
 
 
 class FakeTTS:
@@ -107,10 +112,19 @@ def test_no_gap_between_sentences_once_synthesis_is_ahead():
     boundaries = [gaps[i * FRAMES_PER_SENTENCE - 1]
                   for i in range(1, len(stamps) // FRAMES_PER_SENTENCE)]
     worst = max(boundaries)
-    # A boundary should cost no more than an ordinary frame interval. Serialised
-    # it would have cost a whole 0.30 s render.
-    assert worst < 0.10, f"boundary gap {worst * 1000:.0f} ms, synthesis not ahead"
-    print(f"ok: worst sentence-boundary gap {worst * 1000:.0f} ms, not {SYNTH_SECS * 1000:.0f} ms")
+
+    # Measure the ordinary frame interval on this machine rather than assuming
+    # 20 ms: asyncio.sleep granularity differs by platform (about 31 ms for a
+    # 20 ms sleep on Windows, accurate on Linux) and would otherwise decide this.
+    ordinary = sorted(gaps)[len(gaps) // 2]
+    playback = FRAMES_PER_SENTENCE * ordinary
+    deficit = max(0.0, SYNTH_SECS - playback)      # zero when synthesis keeps up
+    budget = deficit + 2 * ordinary
+    assert worst < budget, (
+        f"boundary gap {worst * 1000:.0f} ms exceeds {budget * 1000:.0f} ms "
+        f"(deficit {deficit * 1000:.0f} ms + 2 frames); synthesis is not ahead")
+    print(f"ok: worst sentence-boundary gap {worst * 1000:.0f} ms against a "
+          f"{SYNTH_SECS * 1000:.0f} ms render, budget {budget * 1000:.0f} ms")
 
 
 def test_barge_in_stops_synthesis_and_playback():
