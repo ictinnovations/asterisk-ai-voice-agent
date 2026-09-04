@@ -1,7 +1,7 @@
 """
 STT: OpenAI Whisper + ElevenLabs Scribe.
 
-Receives 8 kHz slin16 frames from AudioSocket, runs WebRTC VAD to detect
+Receives 8 kHz slin frames from AudioSocket, runs WebRTC VAD to detect
 end-of-utterance, then POSTs the buffered audio to the transcription API.
 Yields a final transcript per utterance (via stream() / drain_pending()).
 
@@ -41,7 +41,7 @@ log = logging.getLogger("ai.stt")
 ELEVEN_STT_URL       = "https://api.elevenlabs.io/v1/speech-to-text"
 ELEVEN_DEFAULT_MODEL = "scribe_v1"
 
-SAMPLE_RATE     = 8000   # slin16 / AudioSocket
+SAMPLE_RATE     = 8000   # slin (16-bit, 8 kHz) / AudioSocket
 FRAME_BYTES     = 320    # 20 ms @ 8 kHz mono 16-bit
 MIN_VOICE_MS    = 200    # need at least this much voiced audio to count as an utterance
 MIN_SILENCE_MS  = 550    # silence after voice that triggers end-of-utterance

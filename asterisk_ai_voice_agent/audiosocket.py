@@ -9,7 +9,7 @@ Wire format (binary, big-endian, over TCP):
 Types:
   0x00 HANGUP  no payload
   0x01 UUID    16 bytes (call id from AudioSocket(<uuid>,host:port))
-  0x10 AUDIO   slin16 8 kHz mono - 320 bytes per 20 ms frame
+  0x10 AUDIO   slin (16-bit signed linear, 8 kHz mono) - 320 bytes per 20 ms frame
   0xff ERROR   1 byte error code
 
 Reference: app_audiosocket.c in the Asterisk source tree.

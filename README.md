@@ -9,7 +9,7 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 ```
   ┌────────┐   RTP    ┌──────────┐  AudioSocket (TCP)  ┌───────────────────────┐
   │ Caller │◀───────▶│ Asterisk │◀───────────────────▶│  ai-voice-agent       │
-  └────────┘          └──────────┘   slin16 8 kHz      │  STT → LLM → TTS loop │
+  └────────┘          └──────────┘   slin 8 kHz        │  STT → LLM → TTS loop │
                                                         │  + tool calling       │
                                                         └───────────┬───────────┘
                                                   Whisper/Scribe · Claude · Piper/ElevenLabs
@@ -19,7 +19,7 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 
 - **Speech in** via OpenAI Whisper or ElevenLabs Scribe, with WebRTC VAD deciding when you've stopped talking.
 - **The brain** is Anthropic Claude, streamed token-by-token so the agent starts replying before the whole answer is ready. Swapping in another LLM means implementing one small module interface, documented in [PORTING.md](./PORTING.md).
-- **Speech out** via [Piper](https://github.com/rhasspy/piper), which runs locally and costs nothing, or ElevenLabs if you want their voices. Either way it's resampled to the 8 kHz slin16 that Asterisk expects.
+- **Speech out** via [Piper](https://github.com/rhasspy/piper), which runs locally and costs nothing, or ElevenLabs if you want their voices. Either way it's resampled to the 8 kHz slin that Asterisk expects.
 - **Barge-in.** Start talking and the agent shuts up, like a real conversation.
 - **Tool calling.** Let the model transfer the call, schedule a callback, look something up in your CRM. Calls go out to a webhook you control, so the actual logic stays in your stack.
 - **Personas** are just YAML: a greeting, a system prompt, which voice, which model, which tools.

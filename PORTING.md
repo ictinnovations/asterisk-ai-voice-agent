@@ -14,7 +14,7 @@ that honours them drops straight in.
 StreamingSTT(provider, model, language, api_key=None,
              elevenlabs_api_key=None, min_silence_ms=None)
   async def start(self) -> None
-  async def feed(self, pcm320: bytes) -> None      # one 320-byte slin16 frame in
+  async def feed(self, pcm320: bytes) -> None      # one 320-byte slin frame in
   async def stream(self) -> AsyncIterator[dict]    # yields {'text': ...} finals
   def drain_pending(self) -> list[dict]            # non-blocking backlog drain
   property voice_active -> bool                    # sustained talk-spurt (barge-in)
@@ -45,10 +45,10 @@ changes.
 StreamingTTS(provider, voice_id, model, api_key=None,
              voices_dir=None, default_voice="en_US-amy-medium")
   async def start(self) -> None
-  def synthesise(self, text: str) -> AsyncIterator[bytes]  # yields 320-byte slin16 frames
+  def synthesise(self, text: str) -> AsyncIterator[bytes]  # yields 320-byte slin frames
   async def close(self) -> None
 ```
-Piper (local ONNX) + ElevenLabs (cloud), resampled to 8 kHz slin16. Piper voices
+Piper (local ONNX) + ElevenLabs (cloud), resampled to 8 kHz slin. Piper voices
 are cached process-wide (load is 2.5–5.5 s) and synthesis is serialized behind a
 lock, because espeak-ng's phonemizer isn't thread-safe. The voices directory comes from
 config (`providers.piper.voices_dir`) or `AI_AGENT_VOICES_DIR`; no hardcoded paths.

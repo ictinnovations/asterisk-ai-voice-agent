@@ -1,7 +1,7 @@
 """
 TTS: Piper (local, ONNX) + ElevenLabs (cloud).
 
-Synthesizes text to PCM, resamples to 8 kHz slin16 (the AudioSocket format),
+Synthesizes text to PCM, resamples to 8 kHz slin (the AudioSocket format),
 and yields 320-byte chunks (one 20 ms frame each) so callers can stream them
 straight into AudioSocket AUDIO frames.
 
@@ -42,7 +42,7 @@ DEFAULT_VOICES_DIR = os.environ.get(
 )
 DEFAULT_VOICE_NAME = "en_US-amy-medium"
 
-TARGET_SAMPLE_RATE = 8000   # slin16 / AudioSocket
+TARGET_SAMPLE_RATE = 8000   # slin (16-bit, 8 kHz) / AudioSocket
 FRAME_BYTES        = 320    # 20 ms @ 8 kHz mono 16-bit
 
 ELEVEN_URL_TMPL      = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
@@ -154,7 +154,7 @@ class _StreamResampler:
 
 
 def _iter_frames(pcm: np.ndarray):
-    """Yield 8 kHz slin16 PCM as 20 ms (320-byte) frames, padding the tail."""
+    """Yield 8 kHz slin PCM as 20 ms (320-byte) frames, padding the tail."""
     view = pcm.tobytes()
     for off in range(0, len(view), FRAME_BYTES):
         chunk = view[off:off + FRAME_BYTES]
@@ -293,7 +293,7 @@ class StreamingTTS:
         return pcm
 
     async def synthesise(self, text: str, should_stop=None) -> AsyncIterator[bytes]:
-        """Yield slin16 PCM bytes in 20 ms (320-byte) chunks.
+        """Yield slin PCM bytes in 20 ms (320-byte) chunks.
 
         `should_stop` is polled around synthesis as well as between frames. The
         transports already poll it per frame, but that check cannot run until the
