@@ -102,6 +102,21 @@ class LLM:
                 return
         self.history.append({"role": "assistant", "content": content})
 
+    async def replace_last_assistant(self, text: str) -> None:
+        """Make the most recent assistant message say `text`, or drop it if empty.
+
+        For barge-in. stream_reply() appends the assistant message only once the
+        stream completes, so an abandoned reply leaves none, while a completed
+        one holds the full text and any tool_use blocks. After an interrupt the
+        record should be the part the caller actually heard, with no tool_use,
+        because the tools are not going to be run.
+        """
+        if self.history and self.history[-1]["role"] == "assistant":
+            self.history.pop()
+        text = (text or "").strip()
+        if text:
+            self.history.append({"role": "assistant", "content": text})
+
     async def add_tool_result(self, tool_use_id: str, result_obj) -> None:
         """Feed a tool's result back to Claude so it can continue."""
         result_str = json.dumps(result_obj) if not isinstance(result_obj, str) else result_obj

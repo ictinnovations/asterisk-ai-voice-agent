@@ -46,6 +46,10 @@ jobs:
         run: python tests/test_tts_stream.py
       - name: Behaviour - synthesis overlaps playback across a turn
         run: python tests/test_turn_speaker.py
+      - name: Behaviour - sentences split at sentence ends, not commas or abbreviations
+        run: python tests/test_sentence_split.py
+      - name: Behaviour - a barge-in leaves valid history and runs no stale tools
+        run: python tests/test_interrupted_turn.py
 
   package:
     runs-on: ubuntu-latest

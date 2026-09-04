@@ -175,6 +175,116 @@ def test_lookahead_is_bounded():
     print(f"ok: queue held at {depth} frames with a lookahead of 20")
 
 
+class LockedTTS(FakeTTS):
+    """Renders under a lock in a way that mirrors the Piper path: the await
+    inside the lock's context is where a cancel would land, and cancelling
+    there releases the lock while the (real) worker thread is still busy."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.lock = asyncio.Lock()
+        self.cancelled_in_render = False
+
+    async def synthesise(self, text, should_stop=None):
+        self.started.append(time.monotonic())
+        async with self.lock:
+            try:
+                await asyncio.sleep(self.synth_secs)
+            except asyncio.CancelledError:
+                self.cancelled_in_render = True
+                raise
+        if should_stop is not None and should_stop():
+            return
+        self.rendered += 1
+        for _ in range(self.frames):
+            if should_stop is not None and should_stop():
+                return
+            yield FRAME
+
+
+def test_close_waits_for_an_in_flight_render_instead_of_cancelling_it():
+    """Sentence 0 is short so it queues whole and sentence 1 starts rendering at
+    once. The barge-in lands during that render; close() must let it finish."""
+    tts = LockedTTS(synth_secs=0.30, frames=5)
+    stop = {"v": False}
+
+    async def main():
+        sp = _TurnSpeaker(tts, lambda: stop["v"])
+        sp.start()
+        sp.add("short")
+        sp.add("the one being rendered when the caller cuts in")
+        sp.add("never reached")
+        sp.finish()
+        got = 0
+        async for f in sp.frames():
+            got += 1
+            await asyncio.sleep(0.02)
+            if got == 2:
+                stop["v"] = True
+                break                     # what play() does on barge-in
+        t0 = time.monotonic()
+        await sp.close()
+        return time.monotonic() - t0, sp._task.cancelled()
+
+    waited, cancelled = asyncio.run(main())
+    assert not tts.cancelled_in_render, "close() cancelled the render under the lock"
+    assert not cancelled, "synthesis task was cancelled rather than allowed to stop"
+    assert waited >= 0.15, f"close() returned after {waited * 1000:.0f} ms; it did not wait"
+    assert tts.rendered == 1, f"the interrupted render was played ({tts.rendered})"
+    assert not tts.lock.locked()
+    print(f"ok: close() waited {waited * 1000:.0f} ms for the in-flight render, no cancel")
+
+
+def test_close_still_cancels_a_render_that_never_returns():
+    import asterisk_ai_voice_agent.agent as agent_mod
+
+    class HungTTS:
+        async def synthesise(self, text, should_stop=None):
+            await asyncio.Event().wait()   # a provider request that hangs
+            yield FRAME
+
+    async def main():
+        agent_mod.CLOSE_TIMEOUT_SEC, saved = 0.2, agent_mod.CLOSE_TIMEOUT_SEC
+        try:
+            sp = _TurnSpeaker(HungTTS(), lambda: False)
+            sp.start()
+            sp.add("stuck")
+            await asyncio.sleep(0.05)
+            t0 = time.monotonic()
+            await sp.close()
+            return time.monotonic() - t0, sp._task.cancelled()
+        finally:
+            agent_mod.CLOSE_TIMEOUT_SEC = saved
+
+    waited, cancelled = asyncio.run(main())
+    assert cancelled, "a hung render was not cancelled"
+    assert waited < 1.0, f"close() took {waited:.1f}s"
+    print(f"ok: a hung render was cancelled after the {waited * 1000:.0f} ms backstop")
+
+
+def test_spoken_text_covers_only_sentences_that_reached_the_transport():
+    tts = FakeTTS(synth_secs=0.0, frames=5)
+    stop = {"v": False}
+
+    async def main():
+        sp = _TurnSpeaker(tts, lambda: stop["v"])
+        sp.start()
+        for s in ("One.", "Two.", "Three.", "Four."):
+            sp.add(s)
+        sp.finish()
+        got = 0
+        async for f in sp.frames():
+            got += 1
+            if got == 7:                  # two frames into sentence two
+                stop["v"] = True
+                break
+        await sp.close()
+        return sp.spoken_text()
+
+    assert asyncio.run(main()) == "One. Two."
+    print("ok: spoken_text() is the sentences heard, the cut one included")
+
+
 def test_empty_turn_ends_cleanly():
     tts = FakeTTS()
 
@@ -195,5 +305,8 @@ if __name__ == "__main__":
     test_no_gap_between_sentences_once_synthesis_is_ahead()
     test_barge_in_stops_synthesis_and_playback()
     test_lookahead_is_bounded()
+    test_close_waits_for_an_in_flight_render_instead_of_cancelling_it()
+    test_close_still_cancels_a_render_that_never_returns()
+    test_spoken_text_covers_only_sentences_that_reached_the_transport()
     test_empty_turn_ends_cleanly()
     print("\nall turn speaker tests passed")

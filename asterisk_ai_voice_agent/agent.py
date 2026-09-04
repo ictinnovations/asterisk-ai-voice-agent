@@ -51,11 +51,69 @@ logging.basicConfig(
 )
 log = logging.getLogger("ai.agent")
 
-# Ship TTS in natural chunks while the LLM is still streaming. Includes Latin,
-# Urdu full stop/question mark, and Devanagari danda so non-English personas
-# chunk too.
-_SENT_END = re.compile(r"([.!?؟।۔]\s|[,;:]\s(?=\S))")
+# Ship TTS in natural chunks while the LLM is still streaming.
+#
+# The unit is the sentence. Splitting on every comma as well sounded choppy,
+# because the TTS loses the run of the sentence at each cut, so clause breaks are
+# used only once a sentence has run long enough that waiting for its end would
+# cost more than the prosody. Terminators cover Latin, the Urdu full stop and
+# question mark, and the Devanagari danda so non-English personas chunk too. A
+# terminator counts only when whitespace follows it, so "3.5" and "e.g." do not
+# fire mid-token, and a full stop after an abbreviation, an initial or a list
+# number is not a sentence end either: "Dr. Smith", "J. Smith", "1. First".
+_SENT_END = re.compile(r"[.!?؟।۔]+[\"'”’)\]]*\s")
+_CLAUSE_END = re.compile(r"[,;:]\s(?=\S)")
 _MD_STRIP = re.compile(r"[*_`#~]+")
+LONG_SENTENCE_CHARS = 120
+_ABBREVIATIONS = frozenset("""
+mr mrs ms dr prof sr jr st mt ft rd ave blvd inc ltd co corp llc plc vs etc
+e.g i.e cf al approx dept est fig gen gov hon rev sgt capt col lt cmdr
+u.s u.k u.n a.m p.m no nos tel ext
+jan feb mar apr jun jul aug sep sept oct nov dec
+""".split())
+
+
+def _abbreviation_before(text: str, dot: int) -> bool:
+    """True if the full stop at text[dot] ends an abbreviation rather than a sentence."""
+    m = re.search(r"(\S+)$", text[:dot])
+    if not m:
+        return False
+    word = m.group(1).lstrip("(\"'“‘").lower()
+    if word in _ABBREVIATIONS:
+        return True
+    if len(word) == 1 and word.isalpha():          # an initial: "J. Smith"
+        return True
+    if word.isdigit():                             # a list number at line start: "1. First"
+        before = text[:m.start()]
+        return not before.strip() or before.endswith("\n")
+    return False
+
+
+def find_sentence_end(text: str) -> int:
+    """Index just past the first sentence boundary in `text`, or -1 if none."""
+    for m in _SENT_END.finditer(text):
+        if m.group(0)[0] == "." and _abbreviation_before(text, m.start()):
+            continue
+        return m.end()
+    return -1
+
+
+def next_chunk(text: str) -> int:
+    """Where to cut `text` for the next TTS chunk, or -1 to keep buffering.
+
+    A sentence end wins. Failing that, once the buffer has run past
+    LONG_SENTENCE_CHARS the last clause break is used, so a long sentence still
+    starts playing before the model has finished it.
+    """
+    end = find_sentence_end(text)
+    if end != -1:
+        return end
+    if len(text) >= LONG_SENTENCE_CHARS:
+        last = -1
+        for m in _CLAUSE_END.finditer(text):
+            last = m.end()
+        return last
+    return -1
 
 
 def load_yaml(path: str) -> dict:
@@ -92,6 +150,11 @@ class Registry:
 # to ride out a synthesis stall without rendering a whole turn eagerly.
 LOOKAHEAD_FRAMES = 100
 
+# How long close() waits for synthesis to wind down on its own before cancelling
+# it. Once stopping, the loop exits by itself as soon as any in-flight render
+# returns, so this only ever fires on a hung provider request.
+CLOSE_TIMEOUT_SEC = 20.0
+
 
 class _TurnSpeaker:
     """Overlaps synthesis with playback for one assistant turn.
@@ -104,6 +167,10 @@ class _TurnSpeaker:
     Here the transport plays from a single frame queue for the whole turn while a
     synthesis task keeps it fed, so the gap closes to time-to-first-byte of the
     next sentence, and to nothing at all once synthesis stays ahead.
+
+    It also remembers which sentences reached the transport, so that after a
+    barge-in the conversation history can record what the caller heard rather
+    than what the model wrote.
     """
 
     def __init__(self, tts, should_stop, lookahead: int = LOOKAHEAD_FRAMES):
@@ -116,40 +183,56 @@ class _TurnSpeaker:
         self._frames: asyncio.Queue = asyncio.Queue()
         self._lookahead = lookahead
         self._task = None
+        self._closing = False
+        self._texts = []          # every sentence added, in order
+        self._played_upto = -1    # index of the last sentence a frame was played from
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._synth_loop())
 
     def add(self, text: str) -> None:
-        self._sentences.put_nowait(text)
+        self._texts.append(text)
+        self._sentences.put_nowait(len(self._texts) - 1)
 
     def finish(self) -> None:
         """No more sentences. Playback ends once the queue drains."""
         self._sentences.put_nowait(None)
 
-    async def _put(self, frame: bytes) -> bool:
+    def spoken_text(self) -> str:
+        """The sentences the caller heard, to sentence granularity.
+
+        A sentence counts once its first frame has gone to the transport, so the
+        one that was cut off by a barge-in is included in full. That is the
+        right side to err on: the model should know what it was saying.
+        """
+        return " ".join(self._texts[: self._played_upto + 1]).strip()
+
+    def _stopping(self) -> bool:
+        return self._closing or self._should_stop()
+
+    async def _put(self, item) -> bool:
         """Queue a frame, holding synthesis back to the lookahead depth.
 
         Gates on qsize rather than a bounded queue so the queue itself can never
         reject a put, and stays responsive to barge-in while held back.
         """
         while self._frames.qsize() >= self._lookahead:
-            if self._should_stop():
+            if self._stopping():
                 return False
             await asyncio.sleep(0.01)
-        if self._should_stop():
+        if self._stopping():
             return False
-        self._frames.put_nowait(frame)
+        self._frames.put_nowait(item)
         return True
 
     async def _synth_loop(self) -> None:
         try:
             while True:
-                text = await self._sentences.get()
-                if text is None or self._should_stop():
+                idx = await self._sentences.get()
+                if idx is None or self._stopping():
                     break
-                async for frame in self._tts.synthesise(text, self._should_stop):
-                    if not await self._put(frame):
+                async for frame in self._tts.synthesise(self._texts[idx], self._stopping):
+                    if not await self._put((idx, frame)):
                         return
         except asyncio.CancelledError:
             raise
@@ -163,18 +246,42 @@ class _TurnSpeaker:
     async def frames(self):
         """The whole turn as one stream of 20 ms frames."""
         while True:
-            frame = await self._frames.get()
-            if frame is None:
+            item = await self._frames.get()
+            if item is None:
                 return
+            idx, frame = item
+            if idx > self._played_upto:
+                self._played_upto = idx
             yield frame
 
     async def close(self) -> None:
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
+        """Let synthesis wind down, cancelling only if it will not.
+
+        Cancelling outright was wrong on the Piper path. The render runs in a
+        worker thread under the process-wide voice lock, and a cancel lands on
+        the await inside that lock's context, releasing it while espeak-ng is
+        still running in the thread. The next call's render then enters Piper
+        concurrently, which is the thread-safety problem the lock exists to
+        prevent. So the loop is asked to stop and given time to notice: `_put`
+        returns as soon as it polls, and `synthesise` discards a finished render
+        unplayed. Cancel is kept only as a backstop for a provider that hangs.
+        """
+        if self._task is None:
+            return
+        self._closing = True
+        if not self._task.done():
             try:
-                await self._task
-            except (asyncio.CancelledError, Exception):
+                await asyncio.wait_for(asyncio.shield(self._task), CLOSE_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                log.warning("synthesis did not stop within %.0f s; cancelling it",
+                            CLOSE_TIMEOUT_SEC)
+                self._task.cancel()
+            except Exception:
                 pass
+        try:
+            await self._task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 class Call:
@@ -362,6 +469,7 @@ class Call:
         speaker = _TurnSpeaker(self.tts, self._should_stop)
         speaker.start()
         player = asyncio.create_task(self._play(speaker.frames()))
+        reply = self.llm.stream_reply()
 
         def queue(text: str) -> None:
             text = tts_sanitize(text)
@@ -371,16 +479,16 @@ class Call:
             speaker.add(text)
 
         try:
-            async for ev in self.llm.stream_reply():
+            async for ev in reply:
                 if self.interrupt or self.ended:
                     break
                 if ev["kind"] == "text":
                     buf += ev["text"]
-                    m = _SENT_END.search(buf)
-                    while m:
-                        sentence, buf = buf[: m.end()], buf[m.end():]
+                    cut = next_chunk(buf)
+                    while cut != -1:
+                        sentence, buf = buf[:cut], buf[cut:]
                         queue(sentence)
-                        m = _SENT_END.search(buf)
+                        cut = next_chunk(buf)
                 elif ev["kind"] == "tool":
                     pending_tools.append(ev)
                 elif ev["kind"] == "end":
@@ -388,6 +496,9 @@ class Call:
                         queue(buf)
                         buf = ""
         finally:
+            # Close the API stream now rather than whenever the generator is
+            # collected, so an abandoned reply stops generating (and billing).
+            await reply.aclose()
             # Let the queued audio finish before tool calls or the next turn.
             speaker.finish()
             try:
@@ -397,6 +508,20 @@ class Call:
             except Exception:
                 log.exception("playback failed mid-turn")
             await speaker.close()
+        if self.interrupt:
+            # The caller cut in. History has to hold what they heard, not what
+            # the model wrote. If the stream was abandoned there is no assistant
+            # message at all, so the model would not know it had said anything;
+            # if it completed, the message holds the whole reply plus any
+            # tool_use blocks. Either way it becomes the spoken text alone. The
+            # tool calls are dropped with it: a tool_result whose tool_use is no
+            # longer in history is rejected by the API, and that rejection would
+            # repeat on every later turn of the call.
+            await self.llm.replace_last_assistant(speaker.spoken_text())
+            if pending_tools:
+                log.info("call %s: dropped %d tool call(s) from an interrupted turn",
+                         self.uuid, len(pending_tools))
+            return
         for t in pending_tools:
             result = await self.run_tool(t["name"], t["args"])
             await self.llm.add_tool_result(t["id"], result)
