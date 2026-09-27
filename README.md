@@ -247,6 +247,27 @@ If this is useful to you, the wider stack behind it might be too:
 
 Questions about the commercial products go through [the ICT Innovations support portal](https://service.ictinnovations.com/contact.php). Issues and pull requests about this project belong on GitHub, where everyone can read the answer.
 
+## Commercial support and implementation
+
+This project is MIT and stays that way. Everything you need to run it yourself is
+here, and questions asked as GitHub issues get answered in public, where the next
+person to hit the same thing can find them.
+
+If you'd rather not do the integration work, we do it for a living. ICT Innovations
+built this agent for ICTContact and deploys it against other people's Asterisk and
+FreeSWITCH installs:
+
+- **Audit** - we call your existing agent and measure what a caller actually hears:
+  latency at each stage, barge-in behaviour, where it breaks.
+- **Pilot** - three weeks, one use case, against targets agreed before we start.
+- **Implementation** - CRM integration, dialplan work, transfers, reporting.
+- **Managed** - we keep it running and tuned as call patterns shift.
+
+Details and pricing: <https://ictinnovations.com/ai-voice-agent-services/>
+
+None of this is required to use the project, and nothing is held back from the open
+source build to sell you later.
+
 ## License
 
 [MIT](./LICENSE). © Tahir Almas / ICT Innovations, derived from ICTContact.
