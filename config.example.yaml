@@ -18,6 +18,8 @@ providers:
     api_key: ""          # Whisper STT (the default)
   elevenlabs:
     api_key: ""          # optional: Scribe STT and/or cloud TTS (Piper is the local default)
+  sixtydb:
+    api_key: ""          # optional: 60db final transcription
   piper:
     voices_dir: ./voices # local Piper .onnx voices (download_voices.sh)
     default_voice: en_US-amy-medium

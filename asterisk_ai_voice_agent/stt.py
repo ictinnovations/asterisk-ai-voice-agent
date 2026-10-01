@@ -1,5 +1,5 @@
 """
-STT: OpenAI Whisper + ElevenLabs Scribe.
+STT: OpenAI Whisper + ElevenLabs Scribe + 60db.
 
 Receives 8 kHz slin frames from AudioSocket, runs WebRTC VAD to detect
 end-of-utterance, then POSTs the buffered audio to the transcription API.
@@ -11,6 +11,8 @@ Providers (persona.stt_provider):
                       needs an ElevenLabs API key. Any failure falls back to
                       Whisper for that utterance; a 401/403 disables Scribe
                       for the rest of the call.
+  sixtydb / 60db     - 60db POST /stt with a workspace API key; same optional
+                      Whisper fallback and per-call auth failure handling.
 
 Design notes
 - There is no true streaming STT here; we VAD-gate instead.
@@ -18,7 +20,7 @@ Design notes
 - An utterance "ends" after MIN_SILENCE_MS of silence following speech.
 - A LOOKBACK_MS ring buffer of pre-onset frames is prepended to each utterance
   so the VAD's detection lag does not clip the first word.
-- Both APIs accept WAV; we wrap the buffered PCM as a single WAV.
+- All providers accept WAV; we wrap the buffered PCM as a single WAV.
 
 Derived from ICTContact (https://www.ictcontact.com).
 ICT Innovations (https://www.ictinnovations.com) - ICT Vision (https://ict.vision)
@@ -27,6 +29,7 @@ Author: Tahir Almas. MIT licensed.
 
 import asyncio
 import io
+import json
 import logging
 import re
 import wave
@@ -40,6 +43,8 @@ log = logging.getLogger("ai.stt")
 
 ELEVEN_STT_URL       = "https://api.elevenlabs.io/v1/speech-to-text"
 ELEVEN_DEFAULT_MODEL = "scribe_v1"
+SIXTYDB_STT_URL = "https://api.60db.ai/stt"
+MAX_TRANSCRIPT_BYTES = 1024 * 1024
 
 SAMPLE_RATE     = 8000   # slin (16-bit, 8 kHz) / AudioSocket
 FRAME_BYTES     = 320    # 20 ms @ 8 kHz mono 16-bit
@@ -86,12 +91,16 @@ class StreamingSTT:
     def __init__(self, provider: str, model: str, language: str,
                  api_key: Optional[str] = None,
                  elevenlabs_api_key: Optional[str] = None,
-                 min_silence_ms: Optional[int] = None):
+                 min_silence_ms: Optional[int] = None,
+                 sixtydb_api_key: Optional[str] = None):
         self.provider = (provider or "whisper").strip().lower()
         self.model    = model
         self.language = language
         self.api_key  = api_key
         self.elevenlabs_api_key = elevenlabs_api_key or ""
+        self.sixtydb_api_key = sixtydb_api_key or ""
+        self._sixtydb = False
+        self._sixtydb_disabled = False
         self.min_silence_ms = int(min_silence_ms) if min_silence_ms else MIN_SILENCE_MS
         self._vad     = None
         self._client  = None
@@ -139,7 +148,14 @@ class StreamingSTT:
             out.append(item)
 
     async def start(self) -> None:
-        if self.provider in ("elevenlabs", "scribe"):
+        if self.provider in ("sixtydb", "60db"):
+            if not isinstance(self.sixtydb_api_key, str) or not self.sixtydb_api_key.strip():
+                raise RuntimeError("60db API key not configured (providers.sixtydb.api_key)")
+            import httpx
+            self._http = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0),
+                                          follow_redirects=False)
+            self._sixtydb = True
+        elif self.provider in ("elevenlabs", "scribe"):
             if self.elevenlabs_api_key:
                 import httpx  # lazy: only needed for cloud Scribe
                 self._http = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
@@ -149,16 +165,17 @@ class StreamingSTT:
         elif self.provider not in ("whisper", "openai"):
             log.warning("stt provider=%s not implemented; using openai/whisper", self.provider)
         if not self.api_key:
-            if not self._eleven:
+            if not self._eleven and not self._sixtydb:
                 raise RuntimeError("OpenAI API key not configured (providers.openai.api_key)")
-            log.warning("no OpenAI key - Scribe active without whisper fallback")
+            log.warning("no OpenAI key - cloud STT active without whisper fallback")
         # WebRTC VAD: 0=least aggressive, 3=most. 2 is good for phone audio.
         self._vad = webrtcvad.Vad(2)
         if self.api_key:
             self._client = AsyncOpenAI(api_key=self.api_key)
         self._gap_task = asyncio.create_task(self._gap_watchdog())
         log.info("STT ready: provider=%s model=%s language=%s",
-                 "elevenlabs" if self._eleven else "whisper", self.model, self.language)
+                 "sixtydb" if self._sixtydb else "elevenlabs" if self._eleven else "whisper",
+                 self.model, self.language)
 
     async def feed(self, samples: bytes) -> None:
         """Called for every 20 ms inbound audio frame. Drives VAD state."""
@@ -260,6 +277,33 @@ class StreamingSTT:
         resp.raise_for_status()
         return (resp.json().get("text") or "").strip()
 
+    async def _transcribe_sixtydb(self, wav_bytes: bytes) -> str:
+        """POST the existing 8 kHz WAV; validate the final transcript response."""
+        data = {}
+        if self.language and self.language.lower() != "auto":
+            data["language"] = self.language.split("-")[0].lower()
+        async with self._http.stream(
+            "POST", SIXTYDB_STT_URL,
+            headers={"Authorization": "Bearer " + self.sixtydb_api_key},
+            data=data,
+            files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+        ) as resp:
+            resp.raise_for_status()
+            body = bytearray()
+            async for chunk in resp.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > MAX_TRANSCRIPT_BYTES:
+                    raise ValueError("60db transcript response exceeds 1 MiB")
+            result = json.loads(body)
+        if not isinstance(result, dict):
+            raise ValueError("60db returned an invalid response object")
+        if result.get("success") is False or result.get("error") or result.get("error_code"):
+            raise ValueError("60db reported a transcription error")
+        text = result.get("text")
+        if not isinstance(text, str):
+            raise ValueError("60db response must contain text")
+        return text.strip()
+
     async def _transcribe_whisper(self, wav_bytes: bytes) -> str:
         """POST WAV to OpenAI Whisper; return raw text or '' on error."""
         wav_buf = io.BytesIO(wav_bytes)
@@ -268,7 +312,8 @@ class StreamingSTT:
             resp = await self._client.audio.transcriptions.create(
                 model=self.model if (self.model or "").startswith("whisper") else "whisper-1",
                 file=wav_buf,
-                language=self.language.split("-")[0] if self.language else None,
+                language=(self.language.split("-")[0]
+                          if self.language and self.language.lower() != "auto" else None),
                 response_format="json",
             )
             return (resp.text or "").strip()
@@ -282,6 +327,17 @@ class StreamingSTT:
         log.debug("STT submit: %d bytes (%d ms voice)", len(pcm), voice_ms)
 
         text = None
+        if self._sixtydb and not self._sixtydb_disabled:
+            try:
+                text = await self._transcribe_sixtydb(wav_bytes)
+            except Exception as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status in (401, 403):
+                    self._sixtydb_disabled = True
+                    log.error("60db STT auth failed (%s); disabled for this call", status)
+                else:
+                    log.warning("60db STT failed (%s); trying configured Whisper fallback",
+                                type(exc).__name__)
         if self._eleven and not self._eleven_disabled:
             try:
                 text = await self._transcribe_eleven(wav_bytes)
