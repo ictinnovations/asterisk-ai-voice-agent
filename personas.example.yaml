@@ -11,8 +11,8 @@ demo:
   llm_provider: anthropic
   llm_model: claude-sonnet-4-6
   llm_temperature: 0.4
-  stt_provider: openai            # OpenAI Whisper
-  stt_model: whisper-1
+  stt_provider: openai            # openai | elevenlabs | sixtydb
+  stt_model: whisper-1            # ignored by sixtydb (service selects its model)
   stt_language: en
   tts_provider: piper             # piper (local) | elevenlabs (cloud)
   tts_voice_id: en_US-amy-medium  # Piper .onnx basename, or ElevenLabs voice id

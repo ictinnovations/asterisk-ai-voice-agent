@@ -17,7 +17,7 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 
 ## What you get
 
-- **Speech in** via OpenAI Whisper or ElevenLabs Scribe, with WebRTC VAD deciding when you've stopped talking.
+- **Speech in** via OpenAI Whisper, ElevenLabs Scribe, or 60db, with WebRTC VAD deciding when you've stopped talking.
 - **The brain** is Anthropic Claude, streamed token-by-token so the agent starts replying before the whole answer is ready. Swapping in another LLM means implementing one small module interface, documented in [PORTING.md](./PORTING.md).
 - **Speech out** via [Piper](https://github.com/rhasspy/piper), which runs locally and costs nothing, or ElevenLabs if you want their voices. Either way it's resampled to the 8 kHz slin that Asterisk expects.
 - **Barge-in.** Start talking and the agent shuts up, like a real conversation.
@@ -162,9 +162,32 @@ demo:
 | Section | Purpose |
 |---------|---------|
 | `listen` | Host/port the AudioSocket server binds (default `127.0.0.1:9092`). |
-| `providers` | API keys for anthropic / openai / elevenlabs; Piper voice dir. |
+| `providers` | API keys for anthropic / openai / elevenlabs / sixtydb; Piper voice dir. |
 | `tools.webhook_url` | Where `tool_use` calls and transcripts are POSTed. Omit to disable tools. |
 | `limits.max_concurrent_calls` | Concurrency cap (each call ~150 MB during synthesis). |
+
+### 60db transcription
+
+[60db](https://docs.60db.ai) exposes a workspace-authenticated speech-to-text API.
+To use it for a persona, set `providers.sixtydb.api_key` in `config.yaml`, then:
+
+```yaml
+stt_provider: sixtydb
+stt_language: en       # or auto for language detection
+```
+
+The provider uploads the existing VAD-buffered mono 8 kHz WAV to `POST /stt`.
+It produces one final transcript per utterance; `stt_model` is ignored because
+the service chooses the transcription model. Lookback, silence handling and
+transcript plausibility filtering still run locally. TTS is configured separately.
+
+If `providers.openai.api_key` is configured, failed requests fall back to Whisper
+for that utterance. Authentication failures (401/403) disable 60db attempts for
+the rest of the call. Without an OpenAI key, failed utterances produce no
+transcript. Successful empty transcripts do not trigger fallback. No automatic
+60db retries are made. Requests use a 15-second HTTP timeout (5 seconds to
+connect); transcript responses are limited to 1 MiB. A missing 60db key prevents
+that persona's pipeline from starting.
 
 ## Latency and network tuning
 
