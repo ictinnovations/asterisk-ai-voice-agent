@@ -375,6 +375,7 @@ class Call:
             api_key=(providers.get("openai") or {}).get("api_key"),
             elevenlabs_api_key=(providers.get("elevenlabs") or {}).get("api_key"),
             min_silence_ms=self.persona.get("silence_timeout_ms"),
+            sixtydb_api_key=(providers.get("sixtydb") or {}).get("api_key"),
         )
         self.llm = LLM(
             provider=self.persona.get("llm_provider", "anthropic"),

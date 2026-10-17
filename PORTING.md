@@ -12,7 +12,7 @@ that honours them drops straight in.
 ### `stt.StreamingSTT`
 ```python
 StreamingSTT(provider, model, language, api_key=None,
-             elevenlabs_api_key=None, min_silence_ms=None)
+             elevenlabs_api_key=None, min_silence_ms=None, sixtydb_api_key=None)
   async def start(self) -> None
   async def feed(self, pcm320: bytes) -> None      # one 320-byte slin frame in
   async def stream(self) -> AsyncIterator[dict]    # yields {'text': ...} finals
@@ -24,7 +24,10 @@ StreamingSTT(provider, model, language, api_key=None,
 Not a true streaming API. It VAD-gates with `webrtcvad`, buffers an utterance,
 and transcribes on end-of-speech (silence or a wall-clock frame gap, so far-end
 DTX doesn't strand the last utterance). Whisper hallucinations on near-silence
-are filtered. Included providers: OpenAI Whisper and ElevenLabs Scribe.
+are filtered. Included providers: OpenAI Whisper, ElevenLabs Scribe and 60db.
+60db uses the same buffered WAV upload and returns final transcripts, not live
+partial results. Configure `providers.sixtydb.api_key` and select
+`stt_provider: sixtydb` on the persona.
 
 ### `llm.LLM`
 ```python
