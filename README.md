@@ -172,9 +172,12 @@ demo:
 To use it for a persona, set `providers.sixtydb.api_key` in `config.yaml`, then:
 
 ```yaml
-stt_provider: sixtydb
+stt_provider: sixtydb  # 60db works too
 stt_language: en       # or auto for language detection
 ```
+
+This sends your callers' audio to 60db, so check your consent and data-retention
+rules before you turn it on.
 
 The provider uploads the existing VAD-buffered mono 8 kHz WAV to `POST /stt`.
 It produces one final transcript per utterance; `stt_model` is ignored because

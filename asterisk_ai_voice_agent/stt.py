@@ -336,9 +336,9 @@ class StreamingSTT:
                     self._sixtydb_disabled = True
                     log.error("60db STT auth failed (%s); disabled for this call", status)
                 else:
-                    log.warning("60db STT failed (%s); trying configured Whisper fallback",
-                                type(exc).__name__)
-        if self._eleven and not self._eleven_disabled:
+                    log.warning("60db STT failed (%s%s); trying configured Whisper fallback",
+                                type(exc).__name__, f", HTTP {status}" if status else "")
+        elif self._eleven and not self._eleven_disabled:
             try:
                 text = await self._transcribe_eleven(wav_bytes)
             except Exception as e:
