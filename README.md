@@ -28,6 +28,8 @@ Put an AI agent on the phone. Asterisk bridges a live call to this sidecar over 
 
 ## How it works
 
+Want numbers for your own setup? [telephony-voice-agent-benchmark](https://github.com/ictinnovations/telephony-voice-agent-benchmark) plays the Asterisk side of AudioSocket and measures opening latency, pacing and barge-in.
+
 1. Your dialplan answers a call and runs `AudioSocket(<uuid>,<host>:9092)`, passing a persona name via a channel variable.
 2. The sidecar accepts the AudioSocket connection, reads the UUID frame, and loads that persona from `personas.yaml`.
 3. It speaks the greeting (TTS → AUDIO frames), then loops: caller audio → STT → on a final transcript, stream the LLM reply → buffer to sentence boundaries → TTS → paced AUDIO frames back.
